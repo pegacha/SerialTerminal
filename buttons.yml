@@ -1,0 +1,10 @@
+# buttons.yml - Configuration for control buttons
+
+buttons:
+  - id: "test-btn"
+    label: "TEST"
+    message: "TEST\r\n"
+    format: "ascii"
+    tooltip: "Test button"
+    repeat: 2000
+    

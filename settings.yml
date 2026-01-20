@@ -1,5 +1,8 @@
 serial:
-  baud_rate: 57600
-  port: COM4
+  baud_rate: 9600
+  data_bits: '8'
+  parity: N
+  port: COM19
+  stop_bits: '1'
 ui:
   theme: gruvbox

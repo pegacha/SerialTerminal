@@ -1,30 +1,27 @@
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Header, Footer, Static, Button, Select, Input
+from textual.widgets import Footer, Static, Button, Select, Input
 from pathlib import Path
-import time
 import serial
 import yaml
-
+from ui.widgets.log_panel import MultiFormatLog
 from ui.widgets.serial_bar import SerialBar
-from ui.widgets.data_table import ShelfDataTable
-from ui.widgets.status_panel import StatusPanel
-from ui.widgets.log_panel import LogPanel
-from ui.widgets.control_buttons import ControlButtons
+from ui.widgets.dynamic_control_buttons import DynamicControlButtons
+from ui.widgets.quick_send import QuickSend
+from ui.widgets.import_settings import DirectoryTree
 from serial_comm.connection import SerialConnection
 from serial_comm.receiver import SerialReceiver
-from serial_comm.protocol import Protocol
-from models.shelf_data import Shelf, ShelfRow
-from config.settings import SHELF_COUNT, POSITIONS_PER_SHELF
 from utils.formatting import format_frame
 
 
 class TUIApp(App):
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit", show=True),
-        Binding("ctrl+w", "clear_log", "Clear Log", show=True),
-        Binding("ctrl+r", "reload_css", "Reload CSS", show=False)
+        Binding("ctrl+q", "quit", "quit", show=True),
+        Binding("ctrl+w", "clearlog_message", "clear", show=True),
+        Binding("ctrl+r", "reload_css", "reload css", show=False),
+        Binding("ctrl+b", "reload_buttons", "reload buttons", show=True),
+        Binding("ctrl+i", "import_settings", "import settings", show=True)
     ]
 
     CSS_PATH = "styles.tcss"
@@ -32,17 +29,13 @@ class TUIApp(App):
     def __init__(self):
         super().__init__()
         self.serial_conn = SerialConnection()
-        self.receiver = SerialReceiver(self.serial_conn)
+        self.receiver = SerialReceiver(
+            self.serial_conn,
+            self._on_frame_received_threadsafe
+        )
 
-        self.first_ack_received = False
-        self.receiving_shelf_data = False
-        self.received_shelf_bitmask = False
-        self.current_shelf_list_idx = 0
-        self.current_row_idx = 0
-        self.available_shelf_list = []
-        
-
-        self._setup_receiver_callbacks()
+    def import_settings(self):
+        DirectoryTree.run()
 
     def loadSettings(self):
         settings_file = Path("settings.yml")
@@ -61,225 +54,81 @@ class TUIApp(App):
                 with open(settings_file, 'w') as f:
                     yaml.dump(default_settings, f, default_flow_style=False)
                 self.config = default_settings
-                self._log("Created default settings file")
+                self.log_message("Created default settings file")
             else:
                 # Load existing settings
                 with open(settings_file, 'r') as f:
                     self.config = yaml.safe_load(f)
 
         except Exception as e:
-            self._log(f"Error loading settings: {e}")
+            self.log_message(f"Error loading settings: {e}")
             self.config = {
                 'serial': {'port': 'none', 'baud_rate': 57600},
                 'ui': {'theme': 'nord'}
             }
 
-    def saveSettings(self):        
+    def saveSettings(self):
         settings_file = Path("settings.yml")
         try:
             # Save current theme
             self.config['ui']['theme'] = self.theme
-            
+
             # Save current UI values if available
             try:
                 select = self.query_one("#serial-port-select", Select)
-                baud_input = self.query_one("#baud-rate", Input)
+                baud_input = self.query_one("#serial-baud", Select)
+                data_bits = self.query_one("#serial-bits", Select)
+                serial_parity = self.query_one("serial-parity", Select)
+                serial_stop_bits = self.query_one("serial-stop-bits", Select)
+
                 self.config['serial']['port'] = select.value
                 self.config['serial']['baud_rate'] = int(baud_input.value)
+                self.config['serial']['data_bits'] = int(data_bits.value)
+                self.config['serial']['parity'] = int(serial_parity.value)
+                self.config['serial']['stop_bits'] = int(
+                    serial_stop_bits.value)
             except:
                 pass
-            
+
             with open(settings_file, 'w') as f:
                 yaml.dump(self.config, f, default_flow_style=False)
-            
+
         except Exception as e:
-            self._log(f"Error saving settings: {e}")
+            self.log_message(f"Error saving settings: {e}")
 
     def compose(self) -> ComposeResult:
-        yield Static("STOCKS TABACO - POS SIM", id="title")
+        yield Static("SerialTerm", id="title")
         yield SerialBar()
-        yield ShelfDataTable(id="data-grid")
-        yield StatusPanel()
-        yield LogPanel()
-        yield ControlButtons()
+        yield MultiFormatLog()
+        yield QuickSend()
+        yield DynamicControlButtons()
         yield Footer()
 
     def on_mount(self):
         """Initialize UI components on mount."""
         self.loadSettings()
-        
+
         # Apply loaded theme
         if 'ui' in self.config and 'theme' in self.config['ui']:
             self.theme = self.config['ui']['theme']
-        
+
         self.refresh_serial_ports()
-        
+
         # Apply loaded serial settings to UI
         if 'serial' in self.config:
             try:
                 select = self.query_one("#serial-port-select", Select)
-                baud_input = self.query_one("#baud-rate", Input)
-                
+                baud_input = self.query_one("#serial-baud", Input)
+
                 if self.config['serial']['port'] != 'none':
                     select.value = self.config['serial']['port']
                 baud_input.value = str(self.config['serial']['baud_rate'])
-                
+
             except Exception as e:
-                self._log(f"Error applying settings to UI: {e}")
-
-        table = self.query_one(ShelfDataTable)
-        table.setup_columns()
-        table.populate_rows()
-
-    def _setup_receiver_callbacks(self):
-        """Setup callbacks for serial receiver."""
-        self.receiver.on_ack = self._on_ack
-        self.receiver.on_ping_response = self._on_ping
-        self.receiver.on_version = self._on_version
-        self.receiver.on_distance_data = self._on_distance_data
-        self.receiver.on_frame_received = self._on_frame_received
-        self.receiver.on_error = self._on_error
-
-    def _on_ack(self):
-        """Handle ACK response."""
-        if self.receiving_shelf_data:
-            self.receiving_shelf_data = False
-            self.received_shelf_bitmask = False
-            self._log(f"Shelf report complete")
-            try:
-                table = self.query_one(ShelfDataTable)
-                table.refresh()
-            except:
-                pass
-        elif not self.first_ack_received:
-            self.first_ack_received = True
-            self._log("ACK received - requesting VERSION")
-            time.sleep(0.1)
-            self._send_command(Protocol.create_get_version(), "GET_VERSION")
-        else:
-            self._log("ACK received")
-
-    def _on_ping(self):
-        """Handle PING response."""
-        self._log("PING response received")
-
-    def _on_version(self, sw_ver: str, hw_ver: str):
-        """Handle VERSION response."""
-        self._log(f"VERSION: SW {sw_ver} / HW {hw_ver}")
-        try:
-            status_panel = self.query_one(StatusPanel)
-            status_panel.update_versions(sw_ver, hw_ver)
-        except:
-            pass
-
-    def _on_distance_data(self, distance: int):
-        """Handle distance data from GET_REPORT."""
-        if not self.received_shelf_bitmask:
-            available_shelves = distance
-            self._log(
-                f"Received shelf availability: 0x{available_shelves:04X}")
-            self.received_shelf_bitmask = True
-            self._start_shelf_report(available_shelves)
-        else:
-            if len(self.available_shelf_list) == 0:
-                self._log(
-                    "Warning: Received distance data but no shelves available")
-                return
-
-            if self.current_shelf_list_idx >= len(self.available_shelf_list):
-                self._log(
-                    "Warning: Received extra data beyond available shelves")
-                return
-
-            shelf_idx = self.available_shelf_list[self.current_shelf_list_idx]
-
-            if self.current_row_idx % 8 == 0:
-                self._log(
-                    f"Shelf {shelf_idx + 1} Row {self.current_row_idx}: {distance}mm")
-
-            try:
-                table = self.query_one(ShelfDataTable)
-                self.call_from_thread(
-                    self._update_table_cell,
-                    shelf_idx,
-                    self.current_row_idx,
-                    distance
-                )
-            except Exception as e:
-                self._log(f"Error updating table: {e}")
-
-            self.current_row_idx += 1
-
-            if self.current_row_idx >= POSITIONS_PER_SHELF:
-                self._log(
-                    f"Shelf {shelf_idx + 1} complete ({POSITIONS_PER_SHELF} rows)")
-                self.current_shelf_list_idx += 1
-                self.current_row_idx = 0
-
-                if self.current_shelf_list_idx >= len(self.available_shelf_list):
-                    self._log(
-                        f"All {len(self.available_shelf_list)} shelf data received, waiting for ACK...")
-                else:
-                    next_shelf = self.available_shelf_list[self.current_shelf_list_idx]
-                    self._log(f"Ready for shelf {next_shelf + 1} data...")
+                self.log_message(f"Error applying settings to UI: {e}")
 
     def _on_frame_received(self, frame_bytes: bytes):
-        """Handle received frame for logging."""
-        self._log(f"[RX]: {format_frame(frame_bytes)}")
-
-    def _on_error(self, error_msg: str):
-        """Handle error from receiver."""
-        self._log(error_msg)
-
-    def _start_shelf_report(self, available_shelves: int):
-        """Initialize shelf report parsing."""
-        self.available_shelf_list = []
-        for i in range(SHELF_COUNT):
-            if (available_shelves >> i) & 0x01:
-                self.available_shelf_list.append(i)
-
-        self._log(
-            f"Available shelves: {[s+1 for s in self.available_shelf_list]} (bitmask: 0x{available_shelves:04X})")
-
-        try:
-            table = self.query_one(ShelfDataTable)
-            for i in range(SHELF_COUNT):
-                shelf = table.shelves[i]
-                shelf.available = i in self.available_shelf_list
-
-            for i, shelf in enumerate(table.shelves):
-                table.update_shelf(i, shelf)
-        except Exception as e:
-            self._log(f"Error updating table: {e}")
-
-        self.receiving_shelf_data = True
-        self.current_shelf_list_idx = 0
-        self.current_row_idx = 0
-
-        if len(self.available_shelf_list) > 0:
-            first_shelf = self.available_shelf_list[0]
-            self._log(
-                f"Ready to receive data from {len(self.available_shelf_list)} shelves, starting with shelf {first_shelf + 1}")
-        else:
-            self._log("No available shelves - no data to receive")
-            self.receiving_shelf_data = False
-
-    def _update_table_cell(self, shelf_idx: int, row_idx: int, distance: int):
-        """Update a single table cell with distance data."""
-        try:
-            table = self.query_one(ShelfDataTable)
-            shelf = table.shelves[shelf_idx]
-            shelf.rows[row_idx] = ShelfRow(distance)
-
-            if shelf_idx >= len(table.row_keys):
-                return
-
-            row_key = table.row_keys[shelf_idx]
-            col_key = str(row_idx)
-            table.update_cell(row_key, col_key,
-                              shelf.rows[row_idx].display_value)
-        except Exception as e:
-            self._log(f"UI update error: {e}")
+        self.log_message(f"{format_frame(frame_bytes)}", 'rx')
 
     def on_button_pressed(self, event: Button.Pressed):
         """Handle button press events."""
@@ -291,16 +140,33 @@ class TUIApp(App):
             self._disconnect_serial()
         elif button_id == "refresh-ports":
             self.refresh_serial_ports()
-            self._log("Serial ports refreshed")
-        elif button_id == "btn1":
-            self._send_command(Protocol.create_get_version(), "GET_VERSION")
-        elif button_id == "btn2":
-            self.received_shelf_bitmask = False
-            self._send_command(Protocol.create_get_report(), "GET_REPORT")
-        elif button_id == "btn3":
-            self._log("CMD3 not implemented")
-        elif button_id == "btn4":
-            self._log("CMD4 not implemented")
+        elif button_id == "send-button":  # Quick send
+            if self.serial_conn.connected:
+                input_widget = self.query_one("#quick-send-input", Input)
+                command = input_widget.value
+                self._send_command(command)
+            else:
+                pass
+        elif hasattr(event.button, 'message') and hasattr(event.button, 'format'):
+            message = event.button.message
+            format_type = event.button.format
+            label = event.button.label
+            repeat=event.button.repeat
+
+            if self.serial_conn.connected:
+                self._send_command(message, format_type)
+            else:
+                self.log_message("Not connected to serial port", 'error')
+
+    def on_input_submitted(self, event: Input.Submitted):
+        """Get input value and send the command"""
+        input_widget = self.query_one("#quick-send-input", Input)
+
+        if self.serial_conn.connected:
+            command = input_widget.value
+            self._send_command(command)
+
+        input_widget.value = ""
 
     def refresh_serial_ports(self):
         """Refresh available serial ports list."""
@@ -314,50 +180,72 @@ class TUIApp(App):
             pass
 
     def _connect_serial(self):
-        """Connect to serial port."""
+        """Connect to serial port using SerialConnection wrapper."""
         try:
-            select = self.query_one("#serial-port-select", Select)
-            baud_input = self.query_one("#baud-rate", Input)
-
-            port = select.value
-            if port == "none" or port is Select.BLANK:
-                self._log("Error: No serial port selected")
+            port = self.query_one("#serial-port-select", Select).value
+            if port in ("none", Select.BLANK):
+                self.log_message("No serial port selected", 'error')
                 return
 
-            try:
-                baud_rate = int(baud_input.value)
-            except ValueError:
-                self._log("Error: Invalid baud rate")
-                return
+            baud_rate = int(self.query_one("#serial-baud", Select).value)
+            parity_val = self.query_one("#serial-parity", Select).value
+            bits_val = self.query_one("#serial-bits", Select).value
+            stop_val = self.query_one("#serial-stop-bits", Select).value
 
+            # Connect using wrapper (initial connection)
             self.serial_conn.connect(port, baud_rate)
+
+            # Configure pySerial directly
+            ser = self.serial_conn.connection
+            if ser:
+                parity_map = {
+                    "N": serial.PARITY_NONE,
+                    "E": serial.PARITY_EVEN,
+                    "O": serial.PARITY_ODD,
+                    "M": serial.PARITY_MARK,
+                    "S": serial.PARITY_SPACE,
+                }
+                bytesize_map = {
+                    "5": serial.FIVEBITS,
+                    "6": serial.SIXBITS,
+                    "7": serial.SEVENBITS,
+                    "8": serial.EIGHTBITS,
+                }
+                stopbits_map = {
+                    "1": serial.STOPBITS_ONE,
+                    "1.5": serial.STOPBITS_ONE_POINT_FIVE,
+                    "2": serial.STOPBITS_TWO,
+                }
+
+                ser.parity = parity_map[parity_val]
+                ser.bytesize = bytesize_map[bits_val]
+                ser.stopbits = stopbits_map[stop_val]
+
             self.first_ack_received = False
 
-            status = self.query_one("#serial-status", Static)
-            status.remove_class("status-disconnected")
-            status.add_class("status-connected")
-
-            connect_btn = self.query_one("#serial-connect", Button)
-            disconnect_btn = self.query_one("#serial-disconnect", Button)
-            connect_btn.disabled = True
-            disconnect_btn.disabled = False
-
-            self._log(f"Connected to {port} at {baud_rate} baud")
-
-            status_panel = self.query_one(StatusPanel)
-            status_panel.update_connection(True)
+            self.query_one("#serial-connect", Button).disabled = True
+            self.query_one("#serial-disconnect", Button).disabled = False
 
             self.receiver.start()
 
-            # Save settings
-            self.config['serial']['port'] = port
-            self.config['serial']['baud_rate'] = baud_rate
+            self.log_message(f"Connected to {port} at {baud_rate} baud")
+
+            # Save config
+            self.config["serial"] = {
+                "port": port,
+                "baud_rate": baud_rate,
+                "parity": parity_val,
+                "data_bits": bits_val,
+                "stop_bits": stop_val,
+            }
             self.saveSettings()
 
+        except ValueError as e:
+            self.log_message(f"Invalid configuration value: {e}", 'error')
         except serial.SerialException as e:
-            self._log(f"Error connecting to serial: {e}")
+            self.log_message(f"Error connecting to serial: {e}", 'error')
         except Exception as e:
-            self._log(f"Error: {e}")
+            self.log_message(f"Unexpected error: {e}", 'error')
 
     def _disconnect_serial(self):
         """Disconnect from serial port."""
@@ -375,47 +263,65 @@ class TUIApp(App):
             connect_btn.disabled = False
             disconnect_btn.disabled = True
 
-            self._log("Serial disconnected")
+            self.log_message("Serial disconnected")
 
-            status_panel = self.query_one(StatusPanel)
-            status_panel.update_connection(False)
-            status_panel.update_versions("---", "---")
         except:
             pass
 
-    def _send_command(self, frame, comment: str):
-        """Send a command frame over serial."""
+    def _send_command(self, frame, comment: str = ''):
+        """Send a command frame over serial, converting from selected format if needed."""
         if not self.serial_conn.connected:
-            self._log("Error: Not connected to serial port")
+            self.log_message("Not connected to serial port", 'error')
             return
-
         try:
-            frame_bytes = frame.to_bytes()
-            self._log(f"[TX]: {format_frame(frame_bytes)} ({comment})")
-            self.serial_conn.write(frame_bytes)
+            # Get the selected input format
+            try:
+                format_select = self.query_one("#send-format-select", Select)
+                input_format = format_select.value
+            except:
+                input_format = "ascii"  # Default to ASCII if selector not found
+
+            # Convert input based on selected format
+            if input_format == "hex":
+                # Parse hex string (e.g., "48 65 6C 6C 6F" or "48656C6C6F")
+                hex_str = frame.replace(" ", "").replace("0x", "")
+                frameData = bytes.fromhex(hex_str)
+            elif input_format == "decimal":
+                # Parse decimal string (e.g., "72 69 76 76 79")
+                dec_values = frame.split()
+                frameData = bytes([int(val) for val in dec_values])
+            elif input_format == "binary":
+                # Parse binary string (e.g., "01001000 01000101")
+                bin_values = frame.replace(" ", "")
+                # Split into 8-bit chunks
+                byte_values = [bin_values[i:i+8]
+                               for i in range(0, len(bin_values), 8)]
+                frameData = bytes([int(b, 2) for b in byte_values])
+            else:  # ascii (default)
+                frameData = frame.encode('ascii')
+
+            comment_str = f" ({comment})" if comment else ""
+            self.log_message(f"{frameData}{comment_str}", 'tx')
+            self.serial_conn.write(frameData)
+        except ValueError as e:
+            self.log_message(
+                f"Invalid format for {input_format}: {e}", 'error')
         except Exception as e:
-            self._log(f"Error sending command: {e}")
+            self.log_message(f"Error sending command: {e}", 'error')
 
-    def _log(self, message: str):
-        """Write message to log."""
+    def log_message(self, message: str, type: str = ''):
+        """Log a message to the multi-format log panel."""
         try:
-            log = self.query_one(LogPanel)
-            log.log(message)
-        except:
-            pass
+            log = self.query_one(MultiFormatLog)
+            log.log_message(message, type)
+        except Exception as e:
+            # Fallback if log panel not available
+            print(f"Log error: {e} - Message: {message}")
 
-    def action_refresh_data(self):
-        """Refresh data table display."""
-        try:
-            table = self.query_one(ShelfDataTable)
-            table.refresh()
-        except:
-            pass
-
-    def action_clear_log(self):
+    def action_clearlog_message(self):
         """Clear the log window."""
         try:
-            log = self.query_one(LogPanel)
+            log = self.query_one(MultiFormatLog)
             log.clear()
         except:
             pass
@@ -428,6 +334,17 @@ class TUIApp(App):
 
     def action_quit(self):
         """Override quit action to save settings first."""
-        self._log("Quitting and saving settings...")
+        self.log_message("Quitting and saving settings...")
         self.saveSettings()
         self.exit()
+
+    def action_reload_buttons(self):
+        try:
+            control_buttons = self.query_one(DynamicControlButtons)
+            control_buttons.reload_config()
+            self.log_message("Button configuration reloaded from buttons.yml")
+        except Exception as e:
+            self.log_message(f"Error reloading buttons: {e}", 'error')
+
+    def _on_frame_received_threadsafe(self, frame_bytes: bytes):
+        self.call_from_thread(self._on_frame_received, frame_bytes)
