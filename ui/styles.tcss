@@ -1,0 +1,97 @@
+#title {
+    height: auto;
+    width: 100%;
+    content-align: center middle;
+    text-style: bold;
+    hatch: right $accent 20%;
+    color: $accent;
+    padding: 1;
+    border: round $accent;
+}
+
+#serial-bar {
+    layout: horizontal;
+    height: 5;
+    border: round $primary;
+    border-title-align: left;
+    border-title-color: $text;
+    border-title-background: $panel;
+    border-title-style: bold;
+}
+
+#serial-port-select {
+    width: auto;
+    min-width: 20;
+    max-width: 30;
+}
+
+#baud-rate {
+    width: auto;
+    min-width: 10;
+    max-width: 30;
+}
+
+.serial-button {
+    min-width: 11;
+    width: auto;
+    height: auto;
+    margin-right:2
+}
+
+#data-grid {
+    border: round $primary;
+    border-title-align: left;
+    border-title-color: $text;
+    border-title-background: $panel;
+    border-title-style: bold;
+}
+
+#status-window {
+    height: 3;
+    border: round $primary;
+    border-title-align: left;
+    border-title-color: $text;
+    border-title-background: $panel;
+    border-title-style: bold;
+}
+
+
+#status-content {
+    layout: horizontal;
+    height: 3;
+}
+
+.status-item {
+    width: auto;
+    height: 3;
+    margin-right: 3;
+}
+
+#log-window {
+    height: 1fr;
+    border: round $primary;
+    border-title-align: left;
+    border-title-color: $text;
+    border-title-background: $panel;
+    border-title-style: bold;
+}
+
+#button-container {
+    width: 100%;
+    min-height:5;
+    max-height:5;
+    align: center middle;
+    padding: 0 1;
+    border: round $primary;
+    border-title-align: left;
+    border-title-color: $text;
+    border-title-background: $panel;
+    border-title-style: bold;
+}
+
+#button-box Button {
+
+    margin-right: 2;
+    max-width:12;
+}
+
