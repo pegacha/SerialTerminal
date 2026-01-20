@@ -36,13 +36,52 @@
 }
 
 
+#control-buttons {
+    height: auto;
+    border: solid $primary;
+    background: $surface;
+    padding: 1;
+}
+
+#buttons-container {
+    width: 100%;
+    height: auto;
+    align: left top;
+}
+
 .control-button {
-    width: 12;          
-    min-width: 12;      
-    max-width: 12;      
-    height: 3; 
-    margin: 1;       
-    text-overflow: fold; 
+    width: 12;
+    min-width: 12;
+    max-width: 12;
+    height: 3;
+    margin: 0 1 0 0;
+    text-overflow: ellipsis;
+}
+
+.control-button > .button--label {
+    width: 100%;
+    text-overflow: ellipsis;
+}
+
+.control-button:hover {
+    background: $primary-lighten-1;
+}
+
+.control-button:disabled {
+    opacity: 0.5;
+}
+
+.control-button.button-repeating {
+    background: $primary-lighten-1;
+    color: $text;
+    text-style: bold;
+}
+
+
+#no-buttons-msg {
+    padding: 2;
+    text-align: center;
+    color: $text-muted;
 }
 
 #quick-send-window{

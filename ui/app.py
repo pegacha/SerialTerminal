@@ -33,6 +33,8 @@ class TUIApp(App):
             self.serial_conn,
             self._on_frame_received_threadsafe
         )
+        
+        self.repeating_buttons = {}
 
     def import_settings(self):
         DirectoryTree.run()
@@ -144,19 +146,76 @@ class TUIApp(App):
             if self.serial_conn.connected:
                 input_widget = self.query_one("#quick-send-input", Input)
                 command = input_widget.value
-                self._send_command(command)
+                self._send_command(command)  # Uses format from selector
             else:
                 pass
         elif hasattr(event.button, 'message') and hasattr(event.button, 'format'):
             message = event.button.message
             format_type = event.button.format
             label = event.button.label
-            repeat=event.button.repeat
-
+            repeat = getattr(event.button, 'repeat', None)
+            
             if self.serial_conn.connected:
-                self._send_command(message, format_type)
+                if repeat is not None:
+                    # This is a repeating button
+                    self._toggle_repeat_button(event.button, message, format_type, repeat)
+                else:
+                    # Regular one-shot button - use format override
+                    self._send_command(message, format_override=format_type, comment=label)
             else:
                 self.log_message("Not connected to serial port", 'error')
+    
+    def _toggle_repeat_button(self, button: Button, message: str, format_type: str, interval_ms: int):
+        """Toggle a repeating button on/off."""
+        button_id = button.id
+        
+        if button_id in self.repeating_buttons:
+            # Button is currently repeating - stop it
+            self._stop_repeating_button(button_id)
+            button.remove_class("button-repeating")
+            self.log_message(f"Stopped repeating: {button.label}")
+        else:
+            # Start repeating
+            self._start_repeating_button(button_id, button, message, format_type, interval_ms)
+            button.add_class("button-repeating")
+    
+    def _start_repeating_button(self, button_id: str, button: Button, message: str, format_type: str, interval_ms: int):
+        """Start repeating a command at the specified interval."""
+        # Send immediately first
+        self._send_command(message, format_override=format_type, comment="")
+        
+        # Convert ms to seconds
+        interval_s = interval_ms / 1000.0
+        
+        # Set up timer to repeat
+        timer = self.set_interval(
+            interval_s,
+            lambda: self._send_command(message, format_override=format_type, comment=f"{button.label} (repeat)"),
+            name=f"repeat_{button_id}"
+        )
+        
+        # Store the timer handle
+        self.repeating_buttons[button_id] = timer
+    
+    def _stop_repeating_button(self, button_id: str):
+        """Stop a repeating button."""
+        if button_id in self.repeating_buttons:
+            timer = self.repeating_buttons[button_id]
+            timer.stop()
+            del self.repeating_buttons[button_id]
+    
+    def _stop_all_repeating_buttons(self):
+        """Stop all repeating buttons (called on disconnect)."""
+        for button_id in list(self.repeating_buttons.keys()):
+            try:
+                button = self.query_one(f"#{button_id}", Button)
+                button.remove_class("button-repeating")
+            except:
+                pass
+            self._stop_repeating_button(button_id)
+        
+        if self.repeating_buttons:
+            self.log_message("Stopped all repeating buttons")
 
     def on_input_submitted(self, event: Input.Submitted):
         """Get input value and send the command"""
@@ -249,6 +308,7 @@ class TUIApp(App):
 
     def _disconnect_serial(self):
         """Disconnect from serial port."""
+        self._stop_all_repeating_buttons()
         self.receiver.stop()
         self.serial_conn.disconnect()
         self.first_ack_received = False
@@ -268,44 +328,52 @@ class TUIApp(App):
         except:
             pass
 
-    def _send_command(self, frame, comment: str = ''):
-        """Send a command frame over serial, converting from selected format if needed."""
+    def _send_command(self, frame, format_override: str = None, comment: str = ''):
+        """
+        Send a command frame over serial, converting from selected format if needed.
+        
+        Args:
+            frame: The message/command to send
+            format_override: Override the format selector (for control buttons)
+            comment: Optional comment to add to log
+        """
         if not self.serial_conn.connected:
             self.log_message("Not connected to serial port", 'error')
             return
+        
         try:
-            # Get the selected input format
-            try:
-                format_select = self.query_one("#send-format-select", Select)
-                input_format = format_select.value
-            except:
-                input_format = "ascii"  # Default to ASCII if selector not found
-
-            # Convert input based on selected format
+            # Determine which format to use
+            if format_override:
+                # Use the override format (from control button)
+                input_format = format_override
+            else:
+                # Get the selected input format from UI
+                try:
+                    format_select = self.query_one("#send-format-select", Select)
+                    input_format = format_select.value
+                except:
+                    input_format = "ascii"  # Default to ASCII if selector not found
+            
+            # Convert input based on format
             if input_format == "hex":
-                # Parse hex string (e.g., "48 65 6C 6C 6F" or "48656C6C6F")
                 hex_str = frame.replace(" ", "").replace("0x", "")
                 frameData = bytes.fromhex(hex_str)
             elif input_format == "decimal":
-                # Parse decimal string (e.g., "72 69 76 76 79")
                 dec_values = frame.split()
                 frameData = bytes([int(val) for val in dec_values])
             elif input_format == "binary":
-                # Parse binary string (e.g., "01001000 01000101")
                 bin_values = frame.replace(" ", "")
-                # Split into 8-bit chunks
-                byte_values = [bin_values[i:i+8]
-                               for i in range(0, len(bin_values), 8)]
+                byte_values = [bin_values[i:i+8] for i in range(0, len(bin_values), 8)]
                 frameData = bytes([int(b, 2) for b in byte_values])
             else:  # ascii (default)
                 frameData = frame.encode('ascii')
-
+            
             comment_str = f" ({comment})" if comment else ""
             self.log_message(f"{frameData}{comment_str}", 'tx')
             self.serial_conn.write(frameData)
+            
         except ValueError as e:
-            self.log_message(
-                f"Invalid format for {input_format}: {e}", 'error')
+            self.log_message(f"Invalid format for {input_format}: {e}", 'error')
         except Exception as e:
             self.log_message(f"Error sending command: {e}", 'error')
 
@@ -328,6 +396,7 @@ class TUIApp(App):
 
     def on_unmount(self):
         """Clean up on app close."""
+        self._stop_all_repeating_buttons()
         self.saveSettings()
         self.receiver.stop()
         self.serial_conn.disconnect()
