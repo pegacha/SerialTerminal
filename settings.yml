@@ -1,0 +1,5 @@
+serial:
+  baud_rate: 57600
+  port: COM4
+ui:
+  theme: gruvbox
