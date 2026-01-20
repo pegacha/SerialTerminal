@@ -5,13 +5,11 @@
     text-style: bold;
     hatch: right $accent 20%;
     color: $accent;
-    padding: 1;
     border: round $accent;
 }
 
 #serial-bar {
-    layout: horizontal;
-    height: 5;
+    height: 10;
     border: round $primary;
     border-title-align: left;
     border-title-color: $text;
@@ -19,8 +17,7 @@
     border-title-style: bold;
 }
 
-#serial-port-select {
-    width: auto;
+#serial-select {
     min-width: 20;
     max-width: 30;
 }
@@ -38,33 +35,43 @@
     margin-right:2
 }
 
-#data-grid {
+
+.control-button {
+    width: 12;          
+    min-width: 12;      
+    max-width: 12;      
+    height: 3; 
+    margin: 1;       
+    text-overflow: fold; 
+}
+
+#quick-send-window{
     border: round $primary;
     border-title-align: left;
     border-title-color: $text;
     border-title-background: $panel;
     border-title-style: bold;
+    height: 5;
+}
+#quick-send-horizontal {
+    height: auto;
+    align: center middle;
 }
 
-#status-window {
-    height: 3;
-    border: round $primary;
-    border-title-align: left;
-    border-title-color: $text;
-    border-title-background: $panel;
-    border-title-style: bold;
+.quick-send-button {
+    width: 5;
+    min-width: 5;
+    margin-right: 1;
 }
 
-
-#status-content {
-    layout: horizontal;
-    height: 3;
+#send-format-select {
+    width: 15;
+    min-width: 15;
+    margin-right: 1;
 }
 
-.status-item {
-    width: auto;
-    height: 3;
-    margin-right: 3;
+#quick-send-input {
+    width: 1fr;
 }
 
 #log-window {
