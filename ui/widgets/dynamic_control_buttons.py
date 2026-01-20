@@ -1,6 +1,6 @@
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
-from textual.containers import Container, Horizontal, Vertical, Grid, HorizontalScroll
+from textual.containers import Container, Horizontal
 from pathlib import Path
 import yaml
 
@@ -11,7 +11,7 @@ class DynamicControlButtons(Container):
     def __init__(self, config_file: str = "buttons.yml", **kwargs):
         super().__init__(**kwargs)
         self.id = "control-buttons"
-        self.border_title = "Controls"
+        self.border_title = "Control Buttons"
         self.config_file = Path(config_file)
         self.buttons_config = []
         self._load_config()
@@ -23,7 +23,6 @@ class DynamicControlButtons(Container):
                 with open(self.config_file, 'r') as f:
                     config = yaml.safe_load(f)
                     self.buttons_config = config.get('buttons', [])
-        
         except Exception as e:
             print(f"Error loading button config: {e}")
             self.buttons_config = []
@@ -51,6 +50,7 @@ class DynamicControlButtons(Container):
                 # Store message and format as attributes
                 button.message = btn_config.get('message', '')
                 button.format = btn_config.get('format', 'ascii')
+                button.repeat = btn_config.get('repeat', None)  # Repeat interval in ms
                 
                 yield button
     
