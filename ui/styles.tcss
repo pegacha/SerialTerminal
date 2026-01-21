@@ -32,7 +32,8 @@
     min-width: 11;
     width: auto;
     height: auto;
-    margin-right:2
+    margin-right:2;
+    text-overflow: ellipsis;
 }
 
 

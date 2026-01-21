@@ -4,13 +4,18 @@ from textual.widgets import Footer, Static, Button, Select, Input
 from pathlib import Path
 import serial
 import yaml
+
 from ui.widgets.log_panel import MultiFormatLog
 from ui.widgets.serial_bar import SerialBar
 from ui.widgets.dynamic_control_buttons import DynamicControlButtons
 from ui.widgets.quick_send import QuickSend
 from ui.widgets.import_settings import DirectoryTree
+
+from sequence_handler import SequenceHandler,ReceiveSequence
+
 from serial_comm.connection import SerialConnection
 from serial_comm.receiver import SerialReceiver
+
 from utils.formatting import format_frame
 
 
@@ -21,7 +26,7 @@ class TUIApp(App):
         Binding("ctrl+w", "clearlog_message", "clear", show=True),
         Binding("ctrl+r", "reload_css", "reload css", show=False),
         Binding("ctrl+b", "reload_buttons", "reload buttons", show=True),
-        Binding("ctrl+i", "import_settings", "import settings", show=True)
+        Binding("ctrl+s", "reload_sequences", "reload sequences", show=True)  
     ]
 
     CSS_PATH = "styles.tcss"
@@ -35,6 +40,7 @@ class TUIApp(App):
         )
         
         self.repeating_buttons = {}
+        self.sequence_handler = SequenceHandler("sequences.yml")
 
     def import_settings(self):
         DirectoryTree.run()
@@ -66,7 +72,7 @@ class TUIApp(App):
             self.log_message(f"Error loading settings: {e}")
             self.config = {
                 'serial': {'port': 'none', 'baud_rate': 57600},
-                'ui': {'theme': 'nord'}
+                'ui': {'theme': 'nord'} 
             }
 
     def saveSettings(self):
@@ -120,7 +126,7 @@ class TUIApp(App):
         if 'serial' in self.config:
             try:
                 select = self.query_one("#serial-port-select", Select)
-                baud_input = self.query_one("#serial-baud", Input)
+                baud_input = self.query_one("#serial-baud", Select)
 
                 if self.config['serial']['port'] != 'none':
                     select.value = self.config['serial']['port']
@@ -130,7 +136,34 @@ class TUIApp(App):
                 self.log_message(f"Error applying settings to UI: {e}")
 
     def _on_frame_received(self, frame_bytes: bytes):
-        self.log_message(f"{format_frame(frame_bytes)}", 'rx')
+        self.log_message(frame_bytes, 'rx')
+        
+        matched_sequence = self.sequence_handler.check_data(frame_bytes)
+        
+        if matched_sequence:
+            if matched_sequence.comment:
+                self.log_message(matched_sequence.comment, 'seq_comment')
+            
+            # Schedule the response with delay
+            if matched_sequence.delay > 0:
+                self.set_timer(
+                    matched_sequence.delay,
+                    lambda: self._send_sequence_response(matched_sequence)
+                )
+            else:
+                # Send immediately
+                self._send_sequence_response(matched_sequence)
+    
+    def _send_sequence_response(self, sequence: ReceiveSequence):
+        """Send the response for a matched sequence."""
+        try:
+            response_bytes = sequence.get_response_bytes()
+            if response_bytes:
+                self.serial_conn.write(response_bytes)
+                comment = f"Sequence: {sequence.name}"
+                self.log_message(f"{response_bytes} ({comment})", 'tx')
+        except Exception as e:
+            self.log_message(f"Error sending sequence response: {e}", 'error')
 
     def on_button_pressed(self, event: Button.Pressed):
         """Handle button press events."""
@@ -369,7 +402,7 @@ class TUIApp(App):
                 frameData = frame.encode('ascii')
             
             comment_str = f" ({comment})" if comment else ""
-            self.log_message(f"{frameData}{comment_str}", 'tx')
+            self.log_message(frameData, 'tx')  
             self.serial_conn.write(frameData)
             
         except ValueError as e:
@@ -377,13 +410,15 @@ class TUIApp(App):
         except Exception as e:
             self.log_message(f"Error sending command: {e}", 'error')
 
-    def log_message(self, message: str, type: str = ''):
+    def log_message(self, message, type: str = ''):
         """Log a message to the multi-format log panel."""
         try:
             log = self.query_one(MultiFormatLog)
-            log.log_message(message, type)
+            if isinstance(message, bytes):
+                log.log_message(message, type)
+            else:
+                log.log_message(message, type)
         except Exception as e:
-            # Fallback if log panel not available
             print(f"Log error: {e} - Message: {message}")
 
     def action_clearlog_message(self):
@@ -415,5 +450,14 @@ class TUIApp(App):
         except Exception as e:
             self.log_message(f"Error reloading buttons: {e}", 'error')
 
+    def action_reload_sequences(self):
+        """Reload sequence configuration."""
+        try:
+            self.sequence_handler.reload_sequences()
+            active_count = len(self.sequence_handler.get_active_sequences())
+            self.log_message(f"Sequences reloaded: {active_count} active", 'info')
+        except Exception as e:
+            self.log_message(f"Error reloading sequences: {e}", 'error')
+            
     def _on_frame_received_threadsafe(self, frame_bytes: bytes):
         self.call_from_thread(self._on_frame_received, frame_bytes)
