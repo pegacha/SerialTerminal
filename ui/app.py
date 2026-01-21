@@ -161,7 +161,8 @@ class TUIApp(App):
             if response_bytes:
                 self.serial_conn.write(response_bytes)
                 comment = f"Sequence: {sequence.name}"
-                self.log_message(f"{response_bytes} ({comment})", 'tx')
+                self.log_message(response_bytes, 'tx')
+                self.log_message(f"Sequence: {sequence.name}", 'info')
         except Exception as e:
             self.log_message(f"Error sending sequence response: {e}", 'error')
 
