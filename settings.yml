@@ -1,8 +1,6 @@
-serial:
-  baud_rate: 9600
-  data_bits: '8'
-  parity: N
-  port: COM20
-  stop_bits: '1'
+config:
+  auto_load_last: false
+  last_used: C:\Users\Henrique\Documents\SerialTerminal\buttons.yml
+recent_configs: null
 ui:
   theme: gruvbox

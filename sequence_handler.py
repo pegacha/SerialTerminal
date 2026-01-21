@@ -119,21 +119,56 @@ class ReceiveSequence:
 class SequenceHandler:
     """Manages all receive sequences."""
     
-    def __init__(self, config_path: str = "sequences.yml"):
-        self.config_path = Path(config_path)
+    def __init__(self, config_path: str = None, config_data: list = None):
+        """
+        Initialize SequenceHandler.
+        
+        Args:
+            config_path: Path to YAML file (legacy support)
+            config_data: List of sequence dictionaries from unified config
+        """
+        self.config_path = Path(config_path) if config_path else None
         self.sequences: List[ReceiveSequence] = []
-        self.load_sequences()
+        
+        if config_data is not None:
+            # Load from provided data (unified config)
+            self.load_sequences_from_data(config_data)
+        elif self.config_path:
+            # Load from file (legacy support)
+            self.load_sequences()
+        else:
+            print("SequenceHandler initialized with no config")
     
-    def load_sequences(self):
-        """Load sequences from YAML configuration file."""
+    def load_sequences_from_data(self, sequences_data: list):
+        """Load sequences from provided list data."""
         self.sequences.clear()
         
         try:
-            if  self.config_path.exists():
+            if not sequences_data:
+                print("No sequences in config data")
+                return
+                
+            for seq_config in sequences_data:
+                sequence = ReceiveSequence(seq_config)
+                self.sequences.append(sequence)
+            
+            print(f"Loaded {len(self.sequences)} sequences from config data")
+            
+        except Exception as e:
+            print(f"Error loading sequences from data: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def load_sequences(self):
+        """Load sequences from YAML configuration file (legacy support)."""
+        self.sequences.clear()
+        
+        try:
+            if self.config_path and self.config_path.exists():
                 # Load sequences
                 with open(self.config_path, 'r') as f:
                     config = yaml.safe_load(f)
-                    print(f"Found sequence file")
+                    print(f"Found sequence file: {self.config_path}")
                 
                 if config and 'sequences' in config:
                     for seq_config in config['sequences']:
@@ -141,13 +176,29 @@ class SequenceHandler:
                         self.sequences.append(sequence)
                     
                     print(f"Loaded {len(self.sequences)} sequences")
-            
+                else:
+                    print("No 'sequences' key found in config file")
+            else:
+                print(f"Sequence config file not found: {self.config_path}")
+        
         except Exception as e:
             print(f"Error loading sequences: {e}")
+            import traceback
+            traceback.print_exc()
     
-    def reload_sequences(self):
-        """Reload sequences from file."""
-        self.load_sequences()
+    def reload_sequences(self, config_data: list = None):
+        """
+        Reload sequences from data or file.
+        
+        Args:
+            config_data: Optional list of sequence dictionaries
+        """
+        if config_data is not None:
+            self.load_sequences_from_data(config_data)
+        elif self.config_path:
+            self.load_sequences()
+        else:
+            print("Cannot reload: no config source available")
     
     def check_data(self, data: bytes) -> Optional[ReceiveSequence]:
         """
