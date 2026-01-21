@@ -53,40 +53,59 @@ class MultiFormatLog(Container):
             with TabPane("Binary", id="tab-binary"):
                 yield LogPanel()
     
-    def log_message(self, message: str, type: str = ''):
+    def log_message(self, message, type: str = ''):
         """
         Log a message to all format tabs.
         
         Args:
-            message: The message to log
-            type: Message type ('tx', 'rx', 'error', or '')
+            message: The message to log (can be bytes or str)
+            type: Message type ('tx', 'rx', 'error', 'seq_comment', or '')
         """
         type_map = {
             'tx': '[TX] ',
             'rx': '[RX] ',
-            'error': '[Error] '
+            'error': '[Error] ',
+            'seq_comment': '[Sequence] '
         }
-        type_str = type_map.get(type, '')
-        full_message = f"{type_str}{message}"
+        type_prefix = type_map.get(type, '')
         
         try:
             # For TX/RX messages, format in all encoding types
             if type in ('tx', 'rx'):
-                ascii_msg = format_log_message_ascii(full_message)
-                hex_msg = format_log_message_hex(full_message)
-                dec_msg = format_log_message_decimal(full_message)
-                bin_msg = format_log_message_binary(full_message)
+                # Format the data first, then add prefix
+                ascii_msg = format_log_message_ascii(message)
+                hex_msg = format_log_message_hex(message)
+                dec_msg = format_log_message_decimal(message)
+                bin_msg = format_log_message_binary(message)
+                
+                # Add type prefix after timestamp
+                ascii_msg = self._add_prefix_after_timestamp(ascii_msg, type_prefix)
+                hex_msg = self._add_prefix_after_timestamp(hex_msg, type_prefix)
+                dec_msg = self._add_prefix_after_timestamp(dec_msg, type_prefix)
+                bin_msg = self._add_prefix_after_timestamp(bin_msg, type_prefix)
                 
                 self.query_one("#tab-ascii LogPanel").log(ascii_msg)
                 self.query_one("#tab-hex LogPanel").log(hex_msg)
                 self.query_one("#tab-decimal LogPanel").log(dec_msg)
                 self.query_one("#tab-binary LogPanel").log(bin_msg)
+                
+            elif type == 'seq_comment':
+                # Sequence comments always display as plain text in all tabs
+                formatted = format_log_message(message)
+                formatted = self._add_prefix_after_timestamp(formatted, type_prefix)
+                
+                self.query_one("#tab-ascii LogPanel").log(formatted)
+                self.query_one("#tab-hex LogPanel").log(formatted)
+                self.query_one("#tab-decimal LogPanel").log(formatted)
+                self.query_one("#tab-binary LogPanel").log(formatted)
+                
             else:
                 # Non TX/RX messages (errors, info, etc.) only go to ASCII tab
+                # or add to all tabs as plain text
+                full_message = f"{type_prefix}{message}" if isinstance(message, str) else message
                 formatted = format_log_message(full_message)
+                
                 self.query_one("#tab-ascii LogPanel").log(formatted)
-                # Optionally, you can also log to other tabs as plain text
-                # or skip them entirely. Here we'll add them to all tabs:
                 self.query_one("#tab-hex LogPanel").log(formatted)
                 self.query_one("#tab-decimal LogPanel").log(formatted)
                 self.query_one("#tab-binary LogPanel").log(formatted)
@@ -94,7 +113,18 @@ class MultiFormatLog(Container):
         except Exception as e:
             # Fallback logging
             print(f"Error logging message: {e}")
-    
+
+    def _add_prefix_after_timestamp(self, formatted_msg: str, prefix: str) -> str:
+        """
+        Add a prefix after the timestamp in a formatted message.
+        Converts: "[12:34:56.789] data" -> "[12:34:56.789] [TX] data"
+        """
+        if prefix and "] " in formatted_msg:
+            parts = formatted_msg.split("] ", 1)
+            if len(parts) == 2:
+                return f"{parts[0]}] {prefix}{parts[1]}"
+        return formatted_msg
+        
     def clear(self):
         """Clear all log panels."""
         try:

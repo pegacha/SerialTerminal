@@ -1,0 +1,11 @@
+sequences:
+  - name: "ACK Response"
+    active: true
+    delay: 0
+    receive:
+      data: "06"
+      format: "hex"
+    send:
+      data: "06"
+      format: "hex"
+    comment: "ACK Received"
