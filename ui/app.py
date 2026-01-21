@@ -20,6 +20,8 @@ from serial_comm.receiver import SerialReceiver
 
 from utils.formatting import format_frame
 
+from utils.docklight_interpreter import DocklightConfigInterpreter
+
 
 class TUIApp(App):
 
@@ -293,60 +295,74 @@ class TUIApp(App):
         except Exception as e:
             self.log_message(f"Error reloading config: {e}", 'error')
 
-        def action_import_config(self):
-            """Import configuration from a file using file picker."""
-            def handle_file_open(file_path: Path | None) -> None:
-                if file_path is None:
-                    self.log_message("Import cancelled", 'info')
-                    return
-                
-                try:
-                    # Load and validate config
+    def action_import_config(self):
+        """Import configuration from a file using file picker."""
+        def handle_file_open(file_path: Path | None) -> None:
+            if file_path is None:
+                self.log_message("Import cancelled", 'info')
+                return
+            
+            try:
+                # Check file extension to determine format
+                if file_path.suffix.lower() == '.ptp':
+                    # Docklight format
+                    interpreter = DocklightConfigInterpreter()
+                    new_config = interpreter.parse_file(file_path)
+                    self.log_message(f"Imported Docklight config", 'info')
+                elif file_path.suffix.lower() in {'.yml', '.yaml'}:
+                    # YAML format
                     with open(file_path, 'r') as f:
                         new_config = yaml.safe_load(f)
-                    
-                    is_valid, error_msg = self.validate_config(new_config)
-                    
-                    if not is_valid:
-                        self.log_message(f"Invalid config: {error_msg}", 'error')
-                        return
-                    
-                    # Backup current config
-                    if self.config:
-                        backup_file = Path("project.backup.yml")
-                        with open(backup_file, 'w') as f:
-                            yaml.dump(self.config, f, default_flow_style=False)
-                        self.log_message(f"Backed up to {backup_file.name}", 'info')
-                    
-                    # Load the new config
-                    self.config = new_config
-                    self.saveUnifiedConfig()
-                    
-                    # Update last_used in settings
-                    if 'config' not in self.settings:
-                        self.settings['config'] = {}
-                    self.settings['config']['last_used'] = str(file_path)
-                    self.saveSettings()
-                    
-                    # Reload everything
-                    self.action_reload_config()
-                    
-                    self.log_message(f"Config imported from: {file_path.name}", 'info')
-                    
-                except yaml.YAMLError as e:
-                    self.log_message(f"Invalid YAML: {e}", 'error')
-                except Exception as e:
-                    self.log_message(f"Error importing: {e}", 'error')
-            
-            # Show file picker
-            file_open_screen = FileOpen(
-                ".",  # Starting directory
-                filters=Filters(
-                    ("YAML files", lambda p: p.suffix.lower() in {".yml", ".yaml"}),
-                    ("All files", lambda p: True),
-                ),
-            )
-            self.push_screen(file_open_screen, handle_file_open)
+                else:
+                    self.log_message(f"Unsupported file type: {file_path.suffix}", 'error')
+                    return
+                
+                # Validate config
+                is_valid, error_msg = self.validate_config(new_config)
+                
+                if not is_valid:
+                    self.log_message(f"Invalid config: {error_msg}", 'error')
+                    return
+                
+                # Backup current config
+                if self.config:
+                    backup_file = Path("project.backup.yml")
+                    with open(backup_file, 'w') as f:
+                        yaml.dump(self.config, f, default_flow_style=False)
+                    self.log_message(f"Backed up to {backup_file.name}", 'info')
+                
+                # Load the new config
+                self.config = new_config
+                self.saveUnifiedConfig()
+                
+                # Update last_used in settings
+                if 'config' not in self.settings:
+                    self.settings['config'] = {}
+                self.settings['config']['last_used'] = str(file_path)
+                self.saveSettings()
+                
+                # Reload everything
+                self.action_reload_config()
+                
+                self.log_message(f"Config imported from: {file_path.name}", 'info')
+                
+            except yaml.YAMLError as e:
+                self.log_message(f"Invalid YAML: {e}", 'error')
+            except Exception as e:
+                self.log_message(f"Error importing: {e}", 'error')
+                import traceback
+                traceback.print_exc()
+        
+        # Show file picker with both YAML and Docklight filters
+        file_open_screen = FileOpen(
+            ".",
+            filters=Filters(
+                ("YAML files", lambda p: p.suffix.lower() in {".yml", ".yaml"}),
+                ("Docklight files", lambda p: p.suffix.lower() == ".ptp"),
+                ("All files", lambda p: True),
+            ),
+        )
+        self.push_screen(file_open_screen, handle_file_open)
 
     def action_export_config(self):
         """Export current configuration to a file using file picker."""
@@ -584,9 +600,12 @@ class TUIApp(App):
             repeat = getattr(event.button, 'repeat', None)
             
             if self.serial_conn.connected:
-                if repeat is not None:
+                # Check if this is a repeating button (repeat > 0)
+                if repeat is not None and repeat > 0:
+                    # This is a repeating button
                     self._toggle_repeat_button(event.button, message, format_type, repeat)
                 else:
+                    # Regular one-shot button - use format override
                     self._send_command(message, format_override=format_type, comment=label)
             else:
                 self.log_message("Not connected to serial port", 'error')
@@ -609,11 +628,17 @@ class TUIApp(App):
         """Toggle a repeating button on/off."""
         button_id = button.id
         
+        if interval_ms <= 0:
+            self.log_message(f"Cannot repeat {button.label}: invalid interval", 'error')
+            return
+        
         if button_id in self.repeating_buttons:
+            # Button is currently repeating - stop it
             self._stop_repeating_button(button_id)
             button.remove_class("button-repeating")
             self.log_message(f"Stopped repeating: {button.label}")
         else:
+            # Start repeating
             self._start_repeating_button(button_id, button, message, format_type, interval_ms)
             button.add_class("button-repeating")
     

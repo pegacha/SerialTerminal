@@ -7,12 +7,11 @@ name = "SerialTerminal"
 version = "0.1.0"
 description = "TUI Serial terminal"
 requires-python = ">=3.9"
-
 dependencies = [
     "textual>=0.47.0",
     "pyserial>=3.5",
     "pyyaml>=6.0.3",
-    ""
+    "textual-fspicker>=0.0.5"
 ]
 
 [project.scripts]
@@ -21,8 +20,6 @@ serialterminal = "main:main"
 [tool.setuptools]
 packages = [
     "ui",
-    "config",
-    "models",
     "serial_comm",
     "utils",
 ]

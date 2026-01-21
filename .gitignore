@@ -2,5 +2,5 @@ __pycache__/
 build/
 config/
 SerialTerminal.egg-info/
-ui/__pycache__/app.cpython-313.pyc
+ui/__pycache__/
 buttons.yml
