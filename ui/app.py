@@ -344,7 +344,6 @@ class TUIApp(App):
         self._stop_all_repeating_buttons()
         self.receiver.stop()
         self.serial_conn.disconnect()
-        self.first_ack_received = False
 
         try:
             status = self.query_one("#serial-status", Static)
