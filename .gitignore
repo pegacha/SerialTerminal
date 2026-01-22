@@ -4,3 +4,4 @@ config/
 SerialTerminal.egg-info/
 ui/__pycache__/
 buttons.yml
+serial_comm/

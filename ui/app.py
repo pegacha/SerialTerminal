@@ -481,22 +481,23 @@ class TUIApp(App):
         self._stop_all_repeating_buttons()
         self.receiver.stop()
         self.serial_conn.disconnect()
-
+        connect_btn = self.query_one("#serial-connect", Button)
+        disconnect_btn = self.query_one("#serial-disconnect", Button)
+        connect_btn.disabled = False
+        disconnect_btn.disabled = True
+        
         try:
             status = self.query_one("#serial-status", Static)
             status.remove_class("status-connected")
             status.add_class("status-disconnected")
 
-            connect_btn = self.query_one("#serial-connect", Button)
-            disconnect_btn = self.query_one("#serial-disconnect", Button)
-            connect_btn.disabled = False
-            disconnect_btn.disabled = True
-
+            
             self.log_message("Serial disconnected")
-
-        except:
-            pass
-
+            
+        except Exception as e:
+            print(f"Failed disconnecting ritual: {e}")
+            import traceback
+            traceback.print_exc()
     # ========================================================================
     # SERIAL DATA TRANSMISSION
     # ========================================================================
