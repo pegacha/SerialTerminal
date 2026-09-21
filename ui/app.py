@@ -4,9 +4,11 @@ from textual.widgets import Footer, Static, Button, Select, Input
 from textual.screen import ModalScreen
 from textual_fspicker import FileOpen, FileSave, Filters
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 import serial
 import yaml
 import shutil
+import logging
 
 from ui.widgets.log_panel import MultiFormatLog
 from ui.widgets.serial_bar import SerialBar
@@ -21,6 +23,8 @@ from serial_comm.receiver import SerialReceiver
 from utils.formatting import format_frame
 
 from utils.docklight_interpreter import DocklightConfigInterpreter
+
+log = logging.getLogger("serialterminal.app")
 
 
 class TUIApp(App):
@@ -43,6 +47,16 @@ class TUIApp(App):
 
     def __init__(self):
         super().__init__()
+        # Route debug output to a rotating log file instead of stdout/stderr,
+        # which would corrupt the full-screen TUI. Tail serialterminal.log
+        # (capped at ~4MB across 4 files) to debug serial issues.
+        _log_handler = RotatingFileHandler(
+            "serialterminal.log", maxBytes=1_000_000, backupCount=3
+        )
+        _log_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        logging.basicConfig(level=logging.DEBUG, handlers=[_log_handler], force=True)
         self.serial_conn = SerialConnection()
         self.receiver = SerialReceiver(
             self.serial_conn,
@@ -72,13 +86,20 @@ class TUIApp(App):
 
     def on_mount(self):
         """Initialize UI components on mount."""
-        # Apply loaded theme from settings
+        self.refresh_serial_ports()
+        self._apply_serial_config_to_ui()
+
+    def _apply_serial_config_to_ui(self):
+        """Apply the loaded theme and serial settings onto the widgets.
+
+        Shared by on_mount() and config reload, so reloading config never
+        re-runs the whole mount lifecycle (port re-enumeration, etc.).
+        """
+        # Apply loaded theme (settings.yml wins over project.yml)
         if 'ui' in self.settings and 'theme' in self.settings['ui']:
             self.theme = self.settings['ui']['theme']
         elif 'ui' in self.config and 'theme' in self.config['ui']:
             self.theme = self.config['ui']['theme']
-
-        self.refresh_serial_ports()
 
         # Apply loaded serial settings to UI
         if 'serial' in self.config:
@@ -89,7 +110,7 @@ class TUIApp(App):
                 port = self.config['serial'].get('port', 'none')
                 if port != 'none':
                     select.value = port
-                    
+
                 baud_input.value = str(self.config['serial'].get('baud_rate', 115200))
 
             except Exception as e:
@@ -127,7 +148,7 @@ class TUIApp(App):
                     self.settings = yaml.safe_load(f) or {}
                     
         except Exception as e:
-            print(f"Error loading settings: {e}")
+            log.error("Error loading settings: %s", e)
             self.settings = {'ui': {'theme': 'nord'}, 'config': {'last_used': None}}
 
     def saveSettings(self):
@@ -142,7 +163,7 @@ class TUIApp(App):
                 yaml.dump(self.settings, f, default_flow_style=False)
                 
         except Exception as e:
-            print(f"Error saving settings: {e}")
+            log.error("Error saving settings: %s", e)
     
     def loadUnifiedConfig(self):
         """Load unified configuration from project.yml"""
@@ -151,7 +172,7 @@ class TUIApp(App):
                 with open(self.config_file, 'r') as f:
                     self.config = yaml.safe_load(f) or {}
                 
-                print(f"Loaded configuration from {self.config_file}")
+                log.debug("Loaded configuration from %s", self.config_file)
                 
                 # Initialize sequence handler if sequences exist
                 if 'sequences' in self.config:
@@ -160,7 +181,7 @@ class TUIApp(App):
                     self.sequence_handler = SequenceHandler(config_data=[])
                 
             else:
-                print("No project.yml found - starting with defaults")
+                log.debug("No project.yml found - starting with defaults")
                 self.config = {
                     'serial': {
                         'port': 'none',
@@ -178,7 +199,7 @@ class TUIApp(App):
                 self.sequence_handler = SequenceHandler(config_data=[])
                 
         except Exception as e:
-            print(f"Error loading config: {e}")
+            log.error("Error loading config: %s", e)
             self.config = {}
             self.sequence_handler = SequenceHandler(config_data=[])
 
@@ -213,10 +234,10 @@ class TUIApp(App):
             with open(self.config_file, 'w') as f:
                 yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
             
-            print(f"Configuration saved to {self.config_file}")
+            log.debug("Configuration saved to %s", self.config_file)
             
         except Exception as e:
-            print(f"Error saving config: {e}")
+            log.error("Error saving config: %s", e)
 
     def validate_config(self, config_data: dict) -> tuple[bool, str]:
         """
@@ -259,19 +280,33 @@ class TUIApp(App):
     # ========================================================================
 
     def action_edit_config(self):
-        """Open project.yml in nano editor."""
+        """Open project.yml in the platform's text editor."""
         import subprocess
+        import os
+        import sys
+
+        # Resolve an editor: $VISUAL/$EDITOR override, else platform default.
+        editor = os.environ.get('VISUAL') or os.environ.get('EDITOR')
+        if not editor:
+            if sys.platform == 'win32':
+                editor = 'notepad'
+            else:
+                editor = shutil.which('nano') or shutil.which('vi') or 'vi'
+
         try:
             if not self.config_file.exists():
                 self.saveUnifiedConfig()
-            
+
             with self.suspend():
-                subprocess.run(['nano', str(self.config_file)])
-            
+                subprocess.run([editor, str(self.config_file)])
+
             self.action_reload_config()
-            
+
         except FileNotFoundError:
-            self.log_message("nano editor not found", 'error')
+            self.log_message(
+                f"Editor '{editor}' not found. Set the $EDITOR environment variable.",
+                'error'
+            )
         except Exception as e:
             self.log_message(f"Error opening config: {e}", 'error')
             
@@ -286,8 +321,8 @@ class TUIApp(App):
             except Exception as e:
                 self.log_message(f"Error reloading buttons: {e}", 'error')
             
-            self.on_mount()
-            
+            self._apply_serial_config_to_ui()
+
             button_count = len(self.config.get('buttons', []))
             sequence_count = len(self.sequence_handler.get_active_sequences()) if self.sequence_handler else 0
             self.log_message(f"Config reloaded: {button_count} buttons, {sequence_count} sequences", 'info')
@@ -405,12 +440,19 @@ class TUIApp(App):
     def refresh_serial_ports(self):
         """Refresh available serial ports list."""
         ports = SerialConnection.list_ports()
-        port_options = [("None", "none")] + [(p[0], p[1]) for p in ports]
+
+        # Start with a None option
+        port_options = [("None", "none")]
+
+        for device, name, description in ports:
+            label = f"{device} — {description}"
+            value = device
+            port_options.append((label, value))
 
         try:
             select = self.query_one("#serial-port-select", Select)
             select.set_options(port_options)
-        except:
+        except Exception:
             pass
 
     def _connect_serial(self):
@@ -426,36 +468,40 @@ class TUIApp(App):
             bits_val = self.query_one("#serial-bits", Select).value
             stop_val = self.query_one("#serial-stop-bits", Select).value
 
-            self.serial_conn.connect(port, baud_rate)
+            parity_map = {
+                "N": serial.PARITY_NONE,
+                "E": serial.PARITY_EVEN,
+                "O": serial.PARITY_ODD,
+                "M": serial.PARITY_MARK,
+                "S": serial.PARITY_SPACE,
+            }
+            bytesize_map = {
+                "5": serial.FIVEBITS,
+                "6": serial.SIXBITS,
+                "7": serial.SEVENBITS,
+                "8": serial.EIGHTBITS,
+            }
+            stopbits_map = {
+                "1": serial.STOPBITS_ONE,
+                "1.5": serial.STOPBITS_ONE_POINT_FIVE,
+                "2": serial.STOPBITS_TWO,
+            }
 
-            ser = self.serial_conn.connection
-            if ser:
-                parity_map = {
-                    "N": serial.PARITY_NONE,
-                    "E": serial.PARITY_EVEN,
-                    "O": serial.PARITY_ODD,
-                    "M": serial.PARITY_MARK,
-                    "S": serial.PARITY_SPACE,
-                }
-                bytesize_map = {
-                    "5": serial.FIVEBITS,
-                    "6": serial.SIXBITS,
-                    "7": serial.SEVENBITS,
-                    "8": serial.EIGHTBITS,
-                }
-                stopbits_map = {
-                    "1": serial.STOPBITS_ONE,
-                    "1.5": serial.STOPBITS_ONE_POINT_FIVE,
-                    "2": serial.STOPBITS_TWO,
-                }
+            # Apply line settings atomically at open time (see connect()).
+            self.serial_conn.connect(
+                port,
+                baud_rate,
+                bytesize=bytesize_map[bits_val],
+                parity=parity_map[parity_val],
+                stopbits=stopbits_map[stop_val],
+            )
 
-                ser.parity = parity_map[parity_val]
-                ser.bytesize = bytesize_map[bits_val]
-                ser.stopbits = stopbits_map[stop_val]
-
+            self._set_serial_status(True)
             self.query_one("#serial-connect", Button).disabled = True
             self.query_one("#serial-disconnect", Button).disabled = False
 
+            # Frame RX by the actual baud rate (Modbus/ASCII gap detection)
+            self.receiver.set_baud_rate(baud_rate)
             self.receiver.start()
 
             self.log_message(f"Connected to {port} at {baud_rate} baud")
@@ -485,19 +531,25 @@ class TUIApp(App):
         disconnect_btn = self.query_one("#serial-disconnect", Button)
         connect_btn.disabled = False
         disconnect_btn.disabled = True
-        
+
+        self._set_serial_status(False)
+        self.log_message("Serial disconnected")
+
+    def _set_serial_status(self, connected: bool):
+        """Reflect the connection state on the status indicator."""
         try:
             status = self.query_one("#serial-status", Static)
-            status.remove_class("status-connected")
-            status.add_class("status-disconnected")
-
-            
-            self.log_message("Serial disconnected")
-            
+            if connected:
+                status.remove_class("status-disconnected")
+                status.add_class("status-connected")
+                status.update("● Connected")
+            else:
+                status.remove_class("status-connected")
+                status.add_class("status-disconnected")
+                status.update("● Disconnected")
         except Exception as e:
-            print(f"Failed disconnecting ritual: {e}")
-            import traceback
-            traceback.print_exc()
+            log.debug("status update failed: %s", e)
+
     # ========================================================================
     # SERIAL DATA TRANSMISSION
     # ========================================================================
@@ -687,7 +739,7 @@ class TUIApp(App):
             log = self.query_one(MultiFormatLog)
             log.log_message(message, type)
         except Exception as e:
-            print(f"Log error: {e} - Message: {message}")
+            log.error("Log error: %s - Message: %r", e, message)
 
     def action_clearlog_message(self):
         """Clear the log window."""

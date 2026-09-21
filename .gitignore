@@ -1,7 +1,17 @@
+# Python bytecode / caches
 __pycache__/
+*.py[cod]
+
+# Build & packaging artifacts
 build/
-config/
-SerialTerminal.egg-info/
-ui/__pycache__/
-buttons.yml
-serial_comm/
+dist/
+*.egg-info/
+
+# Runtime logs
+serialterminal.log*
+
+# Local machine state (ports, theme, last-opened path) - not shareable
+settings.yml
+
+# Working config written by the app on exit; keep your own out of git
+project.backup.yml

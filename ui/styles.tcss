@@ -36,6 +36,21 @@
     text-overflow: ellipsis;
 }
 
+#serial-status {
+    width: auto;
+    padding: 0 1;
+    content-align: left middle;
+    text-style: bold;
+}
+
+.status-connected {
+    color: $success;
+}
+
+.status-disconnected {
+    color: $error;
+}
+
 
 #control-buttons {
     height: auto;

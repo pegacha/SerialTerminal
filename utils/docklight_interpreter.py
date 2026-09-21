@@ -81,7 +81,7 @@ class DocklightConfigInterpreter:
         idx += 1
         
         # Command (hex string with spaces)
-        command = lines[idx].replace(' ', ' ')  # Normalize spaces for hex format
+        command = lines[idx]
         idx += 1
         
         # Repeat enabled (1 = yes, 0 = no)
@@ -127,7 +127,7 @@ class DocklightConfigInterpreter:
         idx += 1
         
         # Receive pattern (with ?? wildcards and ## for data bytes)
-        receive_pattern = lines[idx].replace(' ', ' ')  # Keep spaces for pattern
+        receive_pattern = lines[idx]
         # Convert ## to ?? (both are wildcards in Docklight)
         receive_pattern = receive_pattern.replace('##', '??')
         idx += 1
@@ -228,4 +228,4 @@ if __name__ == "__main__":
     
     # Print summary
     print("\nGenerated config:")
-    print(yaml.dump(config, default_flow_style, sort_keys=False))
+    print(yaml.dump(config, default_flow_style=False, sort_keys=False))

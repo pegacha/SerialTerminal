@@ -2,7 +2,10 @@ from textual.app import ComposeResult
 from textual.widgets import Button, Static
 from textual.containers import Container, Horizontal
 from pathlib import Path
+import logging
 import yaml
+
+log = logging.getLogger("serialterminal.buttons")
 
 
 class DynamicControlButtons(Container):
@@ -36,12 +39,12 @@ class DynamicControlButtons(Container):
                 with open(self.config_file, 'r') as f:
                     config = yaml.safe_load(f)
                     self.buttons_config = config.get('buttons', [])
-                print(f"Loaded {len(self.buttons_config)} buttons from {self.config_file}")
+                log.debug("Loaded %d buttons from %s", len(self.buttons_config), self.config_file)
             else:
-                print(f"Button config file not found: {self.config_file}")
+                log.debug("Button config file not found: %s", self.config_file)
                 self.buttons_config = []
         except Exception as e:
-            print(f"Error loading button config: {e}")
+            log.error("Error loading button config: %s", e)
             self.buttons_config = []
     
     def compose(self) -> ComposeResult:
@@ -80,12 +83,12 @@ class DynamicControlButtons(Container):
         if config_data is not None:
             # Load from provided data
             self.buttons_config = config_data
-            print(f"Reloaded {len(self.buttons_config)} buttons from config data")
+            log.debug("Reloaded %d buttons from config data", len(self.buttons_config))
         elif self.config_file:
             # Load from file (legacy)
             self._load_config()
         else:
-            print("Cannot reload: no config source available")
+            log.debug("Cannot reload: no config source available")
         
         # Trigger a refresh
         self.refresh(recompose=True)

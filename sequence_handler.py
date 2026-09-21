@@ -1,8 +1,10 @@
 from pathlib import Path
 import yaml
 import re
+import logging
 from typing import List, Dict, Any, Optional
-import time
+
+log = logging.getLogger("serialterminal.sequence")
 
 
 class ReceiveSequence:
@@ -34,8 +36,8 @@ class ReceiveSequence:
         """
         try:
             if self.receive_format == "hex":
-                # Remove extra spaces and split into bytes
-                hex_parts = self.receive_data.replace(" ", " ").split()
+                # Split into per-byte hex tokens (split() collapses whitespace)
+                hex_parts = self.receive_data.split()
                 
                 # Build regex pattern
                 pattern_parts = []
@@ -86,7 +88,7 @@ class ReceiveSequence:
                 return re.compile(pattern_str.encode('latin-1'))
                 
         except Exception as e:
-            print(f"Error compiling pattern for sequence '{self.name}': {e}")
+            log.error("Error compiling pattern for sequence '%s': %s", self.name, e)
             return None
     
     def matches(self, data: bytes) -> bool:
@@ -112,7 +114,7 @@ class ReceiveSequence:
             else:  # ascii
                 return self.send_data.encode('ascii')
         except Exception as e:
-            print(f"Error converting response for sequence '{self.name}': {e}")
+            log.error("Error converting response for sequence '%s': %s", self.name, e)
             return b""
 
 
@@ -137,7 +139,7 @@ class SequenceHandler:
             # Load from file (legacy support)
             self.load_sequences()
         else:
-            print("SequenceHandler initialized with no config")
+            log.debug("SequenceHandler initialized with no config")
     
     def load_sequences_from_data(self, sequences_data: list):
         """Load sequences from provided list data."""
@@ -145,19 +147,17 @@ class SequenceHandler:
         
         try:
             if not sequences_data:
-                print("No sequences in config data")
+                log.debug("No sequences in config data")
                 return
                 
             for seq_config in sequences_data:
                 sequence = ReceiveSequence(seq_config)
                 self.sequences.append(sequence)
             
-            print(f"Loaded {len(self.sequences)} sequences from config data")
-            
+            log.debug("Loaded %d sequences from config data", len(self.sequences))
+
         except Exception as e:
-            print(f"Error loading sequences from data: {e}")
-            import traceback
-            traceback.print_exc()
+            log.exception("Error loading sequences from data: %s", e)
     
     def load_sequences(self):
         """Load sequences from YAML configuration file (legacy support)."""
@@ -168,23 +168,21 @@ class SequenceHandler:
                 # Load sequences
                 with open(self.config_path, 'r') as f:
                     config = yaml.safe_load(f)
-                    print(f"Found sequence file: {self.config_path}")
+                    log.debug("Found sequence file: %s", self.config_path)
                 
                 if config and 'sequences' in config:
                     for seq_config in config['sequences']:
                         sequence = ReceiveSequence(seq_config)
                         self.sequences.append(sequence)
                     
-                    print(f"Loaded {len(self.sequences)} sequences")
+                    log.debug("Loaded %d sequences", len(self.sequences))
                 else:
-                    print("No 'sequences' key found in config file")
+                    log.debug("No 'sequences' key found in config file")
             else:
-                print(f"Sequence config file not found: {self.config_path}")
-        
+                log.debug("Sequence config file not found: %s", self.config_path)
+
         except Exception as e:
-            print(f"Error loading sequences: {e}")
-            import traceback
-            traceback.print_exc()
+            log.exception("Error loading sequences: %s", e)
     
     def reload_sequences(self, config_data: list = None):
         """
@@ -198,7 +196,7 @@ class SequenceHandler:
         elif self.config_path:
             self.load_sequences()
         else:
-            print("Cannot reload: no config source available")
+            log.debug("Cannot reload: no config source available")
     
     def check_data(self, data: bytes) -> Optional[ReceiveSequence]:
         """

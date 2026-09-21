@@ -1,3 +1,4 @@
+import logging
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import TabbedContent, TabPane, Log
@@ -8,6 +9,8 @@ from utils.formatting import (
     format_log_message_decimal,
     format_log_message_binary,
 )
+
+log = logging.getLogger("serialterminal.logpanel")
 
 
 class LogPanel(Log):
@@ -112,7 +115,7 @@ class MultiFormatLog(Container):
                 
         except Exception as e:
             # Fallback logging
-            print(f"Error logging message: {e}")
+            log.error("Error logging message: %s", e)
 
     def _add_prefix_after_timestamp(self, formatted_msg: str, prefix: str) -> str:
         """
@@ -133,4 +136,4 @@ class MultiFormatLog(Container):
             self.query_one("#tab-decimal LogPanel").clear()
             self.query_one("#tab-binary LogPanel").clear()
         except Exception as e:
-            print(f"Error clearing logs: {e}")
+            log.error("Error clearing logs: %s", e)

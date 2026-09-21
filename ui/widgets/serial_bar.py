@@ -1,5 +1,5 @@
 from textual.app import ComposeResult
-from textual.widgets import Button, Select
+from textual.widgets import Button, Select, Static
 from textual.containers import Vertical, Horizontal
 
 
@@ -42,6 +42,8 @@ class SerialBar(Vertical):
                 id="serial-baud",
                 allow_blank=False,
             )
+
+            yield Static("● Disconnected", id="serial-status", classes="status-disconnected")
 
         with Horizontal(id="serial-row-bottom"):
             yield Select(

@@ -1,5 +1,11 @@
 from ui.app import TUIApp
 
-if __name__ == "__main__":
+
+def main():
+    """Console-script entry point (see pyproject [project.scripts])."""
     app = TUIApp()
     app.run()
+
+
+if __name__ == "__main__":
+    main()

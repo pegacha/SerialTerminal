@@ -1,0 +1,7 @@
+# Copy to settings.yml. Local, per-machine preferences - not committed.
+ui:
+  # Any Textual theme name, e.g. nord, gruvbox, textual-dark, tokyo-night.
+  theme: nord
+config:
+  # Path of the last config imported/exported via Ctrl+I / Ctrl+E.
+  last_used: null
