@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SerialTerminal"
-version = "0.1.0"
-description = "TUI Serial terminal"
+version = "0.2.0"
+description = "Textual TUI for talking to serial devices"
+readme = "README.MD"
 requires-python = ">=3.10"  # PEP 604 unions (Path | None) are evaluated at def time
 dependencies = [
     "textual>=0.47.0",
@@ -14,15 +15,28 @@ dependencies = [
     "textual-fspicker>=0.0.5"
 ]
 
-[project.scripts]
-serialterminal = "main:main"
-
-[tool.setuptools]
-packages = [
-    "ui",
-    "serial_comm",
-    "utils",
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
 ]
+
+[project.scripts]
+serialterminal = "serialterminal.__main__:main"
+
+# Everything ships under the serialterminal namespace. The previous layout
+# installed `ui`, `utils`, `config` and `models` as top-level packages, which
+# both collided with other distributions in site-packages and left main.py and
+# sequence_handler.py out of the wheel entirely - so the console script had no
+# entry point to import.
+[tool.setuptools.packages.find]
+include = ["serialterminal*"]
+
+# styles.tcss is loaded at runtime through TUIApp.CSS_PATH and is not a .py
+# file, so it needs declaring or the installed app starts without styling.
+[tool.setuptools.package-data]
+"serialterminal.ui" = ["*.tcss"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

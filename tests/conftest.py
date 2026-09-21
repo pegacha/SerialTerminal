@@ -44,7 +44,7 @@ def make_app(isolated_cwd):
     """
 
     def _make():
-        from ui.app import TUIApp
+        from serialterminal.ui.app import TUIApp
 
         return TUIApp()
 

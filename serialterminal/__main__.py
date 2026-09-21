@@ -1,4 +1,4 @@
-from ui.app import TUIApp
+from serialterminal.ui.app import TUIApp
 
 
 def main():

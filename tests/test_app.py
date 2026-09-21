@@ -258,7 +258,7 @@ class TestLogging:
     async def test_regression_log_error_path_does_not_raise(self, isolated_cwd, make_app):
         """REGRESSION: a local `log =` made the module logger function-local, so
         the error handler raised UnboundLocalError on its own reporting line."""
-        from ui.app import TUIApp
+        from serialterminal.ui.app import TUIApp
 
         unmounted = TUIApp.__new__(TUIApp)
         unmounted.log_message("no widgets here", "info")  # must not raise

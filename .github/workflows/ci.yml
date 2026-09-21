@@ -27,10 +27,56 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+          pip install -e ".[dev]"
 
       - name: Test
         # No serial hardware on a runner: the suite drives a fake connection and
         # Textual's headless pilot, so nothing here needs a real port.
         run: python -m pytest -q
+
+  package:
+    # Guards the packaging fixes. The wheel used to omit main.py,
+    # sequence_handler.py, ui/widgets/ and styles.tcss, so `pip install`
+    # produced a console script whose entry point could not be imported.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install dist/*.whl
+
+      - name: Entry point imports, CSS ships, namespace stays clean
+        run: |
+          cd /tmp  # never import from the source tree
+          /tmp/fresh/bin/python - <<'PY'
+          import importlib.resources as res
+          import importlib.util as util
+
+          from serialterminal.__main__ import main
+          from serialterminal.ui.app import TUIApp
+          from serialterminal.sequence_handler import SequenceHandler
+          from serialterminal.ui.widgets.log_panel import MultiFormatLog
+
+          css = res.files("serialterminal.ui").joinpath("styles.tcss")
+          assert css.is_file(), "styles.tcss missing from the wheel"
+
+          # The old layout installed these as top-level packages.
+          for name in ("ui", "utils", "config", "models", "serial_comm", "main"):
+              assert util.find_spec(name) is None, f"{name} leaked into site-packages"
+
+          print("entry point, CSS and namespace all verified")
+          PY
+
+      - name: Console script is installed and executable
+        run: test -x /tmp/fresh/bin/serialterminal

@@ -7,7 +7,7 @@ so it is clear why they exist.
 import pytest
 import yaml
 
-from sequence_handler import ANY_BYTE, ReceiveSequence, SequenceHandler
+from serialterminal.sequence_handler import ANY_BYTE, ReceiveSequence, SequenceHandler
 
 
 def seq(**overrides):

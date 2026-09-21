@@ -2,7 +2,7 @@ import logging
 import threading
 import time
 from typing import Callable, Optional
-from serial_comm.connection import SerialConnection
+from serialterminal.serial_comm.connection import SerialConnection
 
 log = logging.getLogger("serialterminal.receiver")
 

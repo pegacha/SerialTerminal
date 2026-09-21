@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from serial_comm.receiver import SerialReceiver
+from serialterminal.serial_comm.receiver import SerialReceiver
 from tests.fakes import FakeSerialConnection
 
 

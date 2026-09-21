@@ -10,7 +10,7 @@ Re-check them against a genuine .ptp before trusting the importer with one.
 import pytest
 import yaml
 
-from utils.docklight_interpreter import (
+from serialterminal.utils.docklight_interpreter import (
     DocklightConfigInterpreter,
     convert_docklight_config,
 )
@@ -158,13 +158,13 @@ class TestSequences:
 
 class TestImportedConfigIsUsable:
     def test_output_passes_the_app_validator(self, full_config):
-        from ui.app import TUIApp
+        from serialterminal.ui.app import TUIApp
 
         is_valid, error = TUIApp.validate_config(None, full_config)
         assert is_valid, error
 
     def test_sequences_compile_and_match(self, full_config):
-        from sequence_handler import SequenceHandler
+        from serialterminal.sequence_handler import SequenceHandler
 
         handler = SequenceHandler(config_data=full_config["sequences"])
         assert handler.skipped == 0

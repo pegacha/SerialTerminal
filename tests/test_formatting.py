@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from utils.formatting import (
+from serialterminal.utils.formatting import (
     format_log_message,
     format_log_message_ascii,
     format_log_message_binary,

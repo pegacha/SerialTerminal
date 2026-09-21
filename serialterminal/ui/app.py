@@ -13,17 +13,17 @@ import yaml
 import shutil
 import logging
 
-from ui.widgets.log_panel import MultiFormatLog
-from ui.widgets.serial_bar import SerialBar
-from ui.widgets.dynamic_control_buttons import DynamicControlButtons
-from ui.widgets.quick_send import QuickSend
+from serialterminal.ui.widgets.log_panel import MultiFormatLog
+from serialterminal.ui.widgets.serial_bar import SerialBar
+from serialterminal.ui.widgets.dynamic_control_buttons import DynamicControlButtons
+from serialterminal.ui.widgets.quick_send import QuickSend
 
-from sequence_handler import SequenceHandler, ReceiveSequence
+from serialterminal.sequence_handler import SequenceHandler, ReceiveSequence
 
-from serial_comm.connection import SerialConnection
-from serial_comm.receiver import SerialReceiver
+from serialterminal.serial_comm.connection import SerialConnection
+from serialterminal.serial_comm.receiver import SerialReceiver
 
-from utils.docklight_interpreter import DocklightConfigInterpreter
+from serialterminal.utils.docklight_interpreter import DocklightConfigInterpreter
 
 log = logging.getLogger("serialterminal.app")
 

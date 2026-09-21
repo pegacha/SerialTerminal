@@ -2,7 +2,7 @@ import logging
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import TabbedContent, TabPane, Log
-from utils.formatting import (
+from serialterminal.utils.formatting import (
     timestamp,
     format_log_message,
     format_log_message_ascii,
