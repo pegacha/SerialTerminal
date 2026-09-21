@@ -82,17 +82,6 @@ class SerialBar(Vertical):
                 allow_blank=False
             )
 
-            yield Select(
-                options=[
-                    ("None", "none"),
-                    ("Ignore", "ignore"),
-                    ("Replace", "replace"),
-                ],
-                value="none",
-                id="serial-error-char",
-                allow_blank=False
-            )
-
             yield Button("Connect", id="serial-connect", classes="serial-button")
             yield Button("Disc.", id="serial-disconnect", classes="serial-button", disabled=True)
             yield Button("Refresh", id="refresh-ports", classes="serial-button")

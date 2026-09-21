@@ -1,16 +1,21 @@
 from datetime import datetime
 
-def format_log_message(message) -> str:
+
+def timestamp() -> str:
+    """Current time as HH:MM:SS.mmm, the stamp used by every log line."""
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+def format_log_message(message, stamp: str = None) -> str:
     """Add timestamp to a log message."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    stamp = stamp if stamp is not None else timestamp()
     
     if isinstance(message, bytes):
-        return f"[{timestamp}] {message.hex()}"
-    return f"[{timestamp}] {message}"
+        return f"[{stamp}] {message.hex()}"
+    return f"[{stamp}] {message}"
 
-def format_log_message_ascii(message) -> str:
+def format_log_message_ascii(message, stamp: str = None) -> str:
     """Format log message as ASCII text with timestamp."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    stamp = stamp if stamp is not None else timestamp()
     
     if isinstance(message, bytes):
         # Control character map
@@ -40,44 +45,40 @@ def format_log_message_ascii(message) -> str:
         # Handle newlines - split into multiple lines
         if '<LF>' in ascii_str or '<CR>' in ascii_str:
             lines = ascii_str.replace('<CR><LF>', '\n').replace('<LF>', '\n').replace('<CR>', '\n')
-            formatted_lines = [f"[{timestamp}] {line}" if i == 0 else f"{'':>13} {line}" 
+            formatted_lines = [f"[{stamp}] {line}" if i == 0 else f"{'':>13} {line}" 
                              for i, line in enumerate(lines.split('\n'))]
             return '\n'.join(formatted_lines)
         
-        return f"[{timestamp}] {ascii_str}"
+        return f"[{stamp}] {ascii_str}"
     
-    return f"[{timestamp}] {message}"
+    return f"[{stamp}] {message}"
 
-def format_log_message_hex(message) -> str:
+def format_log_message_hex(message, stamp: str = None) -> str:
     """Format log message as space-separated hex bytes with timestamp."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    stamp = stamp if stamp is not None else timestamp()
     
     if isinstance(message, bytes):
         hex_str = " ".join(f"{byte:02X}" for byte in message)
-        return f"[{timestamp}] {hex_str}"
+        return f"[{stamp}] {hex_str}"
     
-    return f"[{timestamp}] {message}"
+    return f"[{stamp}] {message}"
 
-def format_log_message_decimal(message) -> str:
+def format_log_message_decimal(message, stamp: str = None) -> str:
     """Format log message as space-separated decimal bytes with timestamp."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    stamp = stamp if stamp is not None else timestamp()
     
     if isinstance(message, bytes):
         dec_str = " ".join(str(byte) for byte in message)
-        return f"[{timestamp}] {dec_str}"
+        return f"[{stamp}] {dec_str}"
     
-    return f"[{timestamp}] {message}"
+    return f"[{stamp}] {message}"
 
-def format_log_message_binary(message) -> str:
+def format_log_message_binary(message, stamp: str = None) -> str:
     """Format log message as space-separated 8-bit binary bytes with timestamp."""
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    stamp = stamp if stamp is not None else timestamp()
     
     if isinstance(message, bytes):
         bin_str = " ".join(f"{byte:08b}" for byte in message)
-        return f"[{timestamp}] {bin_str}"
+        return f"[{stamp}] {bin_str}"
     
-    return f"[{timestamp}] {message}"
-
-def format_frame(frame_bytes: bytes) -> str:
-    """Format frame bytes for display - no longer needed, kept for compatibility."""
-    return frame_bytes.hex()
+    return f"[{stamp}] {message}"

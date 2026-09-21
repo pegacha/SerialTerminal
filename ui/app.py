@@ -2,6 +2,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Static, Button, Select, Input
 from textual.widgets.select import InvalidSelectValueError
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual_fspicker import FileOpen, FileSave, Filters
 from pathlib import Path
@@ -21,8 +22,6 @@ from sequence_handler import SequenceHandler, ReceiveSequence
 
 from serial_comm.connection import SerialConnection
 from serial_comm.receiver import SerialReceiver
-
-from utils.formatting import format_frame
 
 from utils.docklight_interpreter import DocklightConfigInterpreter
 
@@ -74,12 +73,12 @@ class TUIApp(App):
         
         # Load user settings first (theme, preferences)
         self.settings = {}
-        self.loadSettings()
+        self.load_settings()
         
         # Load working config (serial, buttons, sequences)
         self.config = {}
         self.sequence_handler = None
-        self.loadUnifiedConfig()
+        self.load_config()
 
     def compose(self) -> ComposeResult:
         yield Static("SerialTerm", id="title")
@@ -101,14 +100,17 @@ class TUIApp(App):
         Shared by on_mount() and config reload, so reloading config never
         re-runs the whole mount lifecycle (port re-enumeration, etc.).
         """
-        # Apply loaded theme (settings.yml wins over project.yml)
-        if 'ui' in self.settings and 'theme' in self.settings['ui']:
-            self.theme = self.settings['ui']['theme']
-        elif 'ui' in self.config and 'theme' in self.config['ui']:
-            self.theme = self.config['ui']['theme']
+        # Theme is per-machine and lives in settings.yml. project.yml is meant
+        # to be shared, so it no longer carries a theme; older files still do,
+        # and are honoured once as a migration before settings.yml takes over.
+        theme = self.settings.get('ui', {}).get('theme')
+        if theme is None:
+            theme = self.config.get('ui', {}).get('theme')
+        if theme:
+            self.theme = theme
 
         # Apply loaded serial settings to UI. Every field saved by
-        # saveUnifiedConfig() must be restored here, or the file and the widgets
+        # save_config() must be restored here, or the file and the widgets
         # disagree and you connect with line settings you never chose.
         serial_cfg = self.config.get('serial')
         if isinstance(serial_cfg, dict):
@@ -151,8 +153,8 @@ class TUIApp(App):
     def on_unmount(self):
         """Clean up on app close."""
         self._stop_all_repeating_buttons()
-        self.saveUnifiedConfig()
-        self.saveSettings()
+        self.save_config()
+        self.save_settings()
         tail = self.receiver.stop()
         if tail:
             # The log panel is on its way out; the file log is what survives.
@@ -163,7 +165,7 @@ class TUIApp(App):
     # SETTINGS & CONFIG MANAGEMENT
     # ========================================================================
 
-    def loadSettings(self):
+    def load_settings(self):
         """Load user settings (theme, preferences, etc.)"""
         try:
             if not self.settings_file.exists():
@@ -186,7 +188,7 @@ class TUIApp(App):
             log.error("Error loading settings: %s", e)
             self.settings = {'ui': {'theme': 'nord'}, 'config': {'last_used': None}}
 
-    def saveSettings(self):
+    def save_settings(self):
         """Save user settings"""
         try:
             # Update theme
@@ -200,7 +202,7 @@ class TUIApp(App):
         except Exception as e:
             log.error("Error saving settings: %s", e)
     
-    def loadUnifiedConfig(self):
+    def load_config(self):
         """Load unified configuration from project.yml"""
         try:
             if self.config_file.exists():
@@ -238,7 +240,7 @@ class TUIApp(App):
             self.config = {}
             self.sequence_handler = SequenceHandler(config_data=[])
 
-    def saveUnifiedConfig(self):
+    def save_config(self):
         """Save unified configuration to project.yml"""
         try:
             # Update serial settings from UI if available
@@ -257,13 +259,16 @@ class TUIApp(App):
                 self.config['serial']['data_bits'] = data_bits.value
                 self.config['serial']['parity'] = serial_parity.value
                 self.config['serial']['stop_bits'] = serial_stop_bits.value
-            except:
-                pass
+            except (NoMatches, ValueError) as e:
+                # Widgets absent (saving before mount / during teardown) or a
+                # non-numeric baud. Keep whatever is already in self.config.
+                log.debug("serial settings not read from UI: %s", e)
 
-            # Update UI theme
-            if 'ui' not in self.config:
-                self.config['ui'] = {}
-            self.config['ui']['theme'] = self.theme
+            # Deliberately not writing the theme here - see _apply_serial_config_to_ui.
+            # Drop a migrated-away 'ui' section so exported configs stop carrying
+            # one operator's colour scheme to everybody else.
+            if self.config.get('ui') == {} or list(self.config.get('ui', {})) == ['theme']:
+                self.config.pop('ui', None)
 
             # Save to file
             with open(self.config_file, 'w') as f:
@@ -333,7 +338,7 @@ class TUIApp(App):
 
         try:
             if not self.config_file.exists():
-                self.saveUnifiedConfig()
+                self.save_config()
 
             with self.suspend():
                 subprocess.run([editor, str(self.config_file)])
@@ -356,7 +361,7 @@ class TUIApp(App):
             # against the port with nothing on screen to show it.
             self._stop_all_repeating_buttons()
 
-            self.loadUnifiedConfig()
+            self.load_config()
 
             try:
                 control_buttons = self.query_one(DynamicControlButtons)
@@ -416,13 +421,13 @@ class TUIApp(App):
                 
                 # Load the new config
                 self.config = new_config
-                self.saveUnifiedConfig()
+                self.save_config()
                 
                 # Update last_used in settings
                 if 'config' not in self.settings:
                     self.settings['config'] = {}
                 self.settings['config']['last_used'] = str(file_path)
-                self.saveSettings()
+                self.save_settings()
                 
                 # Reload everything
                 self.action_reload_config()
@@ -472,7 +477,7 @@ class TUIApp(App):
                 if 'config' not in self.settings:
                     self.settings['config'] = {}
                 self.settings['config']['last_used'] = str(file_path)
-                self.saveSettings()
+                self.save_settings()
                 
             except Exception as e:
                 self.log_message(f"Error exporting: {e}", 'error')
@@ -570,7 +575,7 @@ class TUIApp(App):
                 "data_bits": bits_val,
                 "stop_bits": stop_val,
             }
-            self.saveUnifiedConfig()
+            self.save_config()
 
         except ValueError as e:
             self.log_message(f"Invalid configuration value: {e}", 'error')
@@ -626,9 +631,8 @@ class TUIApp(App):
                 input_format = format_override
             else:
                 try:
-                    format_select = self.query_one("#send-format-select", Select)
-                    input_format = format_select.value
-                except:
+                    input_format = self.query_one("#send-format-select", Select).value
+                except NoMatches:
                     input_format = "ascii"
             
             if input_format == "hex":
@@ -789,9 +793,9 @@ class TUIApp(App):
         """Stop all repeating buttons (called on disconnect)."""
         for button_id in list(self.repeating_buttons.keys()):
             try:
-                button = self.query_one(f"#{button_id}", Button)
-                button.remove_class("button-repeating")
-            except:
+                self.query_one(f"#{button_id}", Button).remove_class("button-repeating")
+            except NoMatches:
+                # Button already recomposed away; the timer still needs stopping.
                 pass
             self._stop_repeating_button(button_id)
         
@@ -813,6 +817,24 @@ class TUIApp(App):
             # error was never reported.
             log.error("Log error: %s - Message: %r", e, message)
 
+    async def action_reload_css(self) -> None:
+        """Re-read styles.tcss without restarting (Ctrl+R).
+
+        The binding existed but the action did not, so the key silently did
+        nothing. _on_css_change is what Textual's own --dev file watcher calls;
+        guarded, because it is not public API.
+        """
+        handler = getattr(self, "_on_css_change", None)
+        if handler is None:
+            self.log_message(
+                "CSS reload unavailable on this Textual version; "
+                "run with `textual run --dev ui.app:TUIApp` instead",
+                'error'
+            )
+            return
+        await handler()
+        self.log_message(f"Reloaded {self.CSS_PATH}", 'info')
+
     def action_clearlog_message(self):
         """Clear the log window."""
         try:
@@ -827,6 +849,6 @@ class TUIApp(App):
     def action_quit(self):
         """Quit application and save all data."""
         self.log_message("Quitting...")
-        self.saveUnifiedConfig()
-        self.saveSettings()
+        self.save_config()
+        self.save_settings()
         self.exit()

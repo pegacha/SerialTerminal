@@ -3,6 +3,7 @@ from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import TabbedContent, TabPane, Log
 from utils.formatting import (
+    timestamp,
     format_log_message,
     format_log_message_ascii,
     format_log_message_hex,
@@ -15,12 +16,14 @@ log = logging.getLogger("serialterminal.logpanel")
 
 class LogPanel(Log):
     """Individual log panel for each format."""
-    
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-    
-    def log(self, message: str):
-        """Write a timestamped message to the log."""
+
+    def write_message(self, message: str):
+        """Append an already-formatted line and keep the view at the bottom.
+
+        Named write_message, not log: MessagePump.log is a property holding
+        Textual's own logger, and overriding it with a method breaks any
+        internal `self.log.debug(...)` call on this widget.
+        """
         self.write_line(message)
         self._scroll_to_end()
     
@@ -72,14 +75,19 @@ class MultiFormatLog(Container):
         }
         type_prefix = type_map.get(type, '')
         
+        # One timestamp for the whole frame. Each formatter used to call
+        # datetime.now() itself, so the same frame was stamped four times and
+        # the tabs disagreed about when it arrived.
+        stamp = timestamp()
+
         try:
             # For TX/RX messages, format in all encoding types
             if type in ('tx', 'rx'):
                 # Format the data first, then add prefix
-                ascii_msg = format_log_message_ascii(message)
-                hex_msg = format_log_message_hex(message)
-                dec_msg = format_log_message_decimal(message)
-                bin_msg = format_log_message_binary(message)
+                ascii_msg = format_log_message_ascii(message, stamp)
+                hex_msg = format_log_message_hex(message, stamp)
+                dec_msg = format_log_message_decimal(message, stamp)
+                bin_msg = format_log_message_binary(message, stamp)
                 
                 # Add type prefix after timestamp
                 ascii_msg = self._add_prefix_after_timestamp(ascii_msg, type_prefix)
@@ -87,31 +95,31 @@ class MultiFormatLog(Container):
                 dec_msg = self._add_prefix_after_timestamp(dec_msg, type_prefix)
                 bin_msg = self._add_prefix_after_timestamp(bin_msg, type_prefix)
                 
-                self.query_one("#tab-ascii LogPanel").log(ascii_msg)
-                self.query_one("#tab-hex LogPanel").log(hex_msg)
-                self.query_one("#tab-decimal LogPanel").log(dec_msg)
-                self.query_one("#tab-binary LogPanel").log(bin_msg)
+                self.query_one("#tab-ascii LogPanel").write_message(ascii_msg)
+                self.query_one("#tab-hex LogPanel").write_message(hex_msg)
+                self.query_one("#tab-decimal LogPanel").write_message(dec_msg)
+                self.query_one("#tab-binary LogPanel").write_message(bin_msg)
                 
             elif type == 'seq_comment':
                 # Sequence comments always display as plain text in all tabs
-                formatted = format_log_message(message)
+                formatted = format_log_message(message, stamp)
                 formatted = self._add_prefix_after_timestamp(formatted, type_prefix)
                 
-                self.query_one("#tab-ascii LogPanel").log(formatted)
-                self.query_one("#tab-hex LogPanel").log(formatted)
-                self.query_one("#tab-decimal LogPanel").log(formatted)
-                self.query_one("#tab-binary LogPanel").log(formatted)
+                self.query_one("#tab-ascii LogPanel").write_message(formatted)
+                self.query_one("#tab-hex LogPanel").write_message(formatted)
+                self.query_one("#tab-decimal LogPanel").write_message(formatted)
+                self.query_one("#tab-binary LogPanel").write_message(formatted)
                 
             else:
                 # Non TX/RX messages (errors, info, etc.) only go to ASCII tab
                 # or add to all tabs as plain text
                 full_message = f"{type_prefix}{message}" if isinstance(message, str) else message
-                formatted = format_log_message(full_message)
+                formatted = format_log_message(full_message, stamp)
                 
-                self.query_one("#tab-ascii LogPanel").log(formatted)
-                self.query_one("#tab-hex LogPanel").log(formatted)
-                self.query_one("#tab-decimal LogPanel").log(formatted)
-                self.query_one("#tab-binary LogPanel").log(formatted)
+                self.query_one("#tab-ascii LogPanel").write_message(formatted)
+                self.query_one("#tab-hex LogPanel").write_message(formatted)
+                self.query_one("#tab-decimal LogPanel").write_message(formatted)
+                self.query_one("#tab-binary LogPanel").write_message(formatted)
                 
         except Exception as e:
             # Fallback logging
