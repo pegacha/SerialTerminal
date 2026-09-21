@@ -6,6 +6,10 @@ from typing import List, Dict, Any, Optional
 
 log = logging.getLogger("serialterminal.sequence")
 
+# Wildcard used by every receive format. A character class rather than "."
+# so it also matches CR/LF, which appear in most real serial framing.
+ANY_BYTE = r"[\x00-\xFF]"
+
 
 class ReceiveSequence:
     """Represents a single receive/send sequence."""
@@ -13,7 +17,7 @@ class ReceiveSequence:
     def __init__(self, config: Dict[str, Any]):
         self.name = config.get('name', 'Unnamed')
         self.active = config.get('active', True)
-        self.delay = config.get('delay', 0) / 1000.0  # Convert ms to seconds
+        self.delay = self._coerce_delay(config.get('delay'))
         self.comment = config.get('comment', '')
         
         # Receive configuration
@@ -29,6 +33,22 @@ class ReceiveSequence:
         # Compile the pattern for matching
         self.pattern = self._compile_pattern()
     
+    @staticmethod
+    def _coerce_delay(raw) -> float:
+        """Convert a config delay in milliseconds to seconds.
+
+        YAML hands us None for `delay:` with no value, and a string if it was
+        quoted. Neither should take down the whole sequence list, so anything
+        uninterpretable falls back to no delay.
+        """
+        if raw is None or raw == "":
+            return 0.0
+        try:
+            return max(0.0, float(raw) / 1000.0)
+        except (TypeError, ValueError):
+            log.warning("Invalid delay %r - treating as 0", raw)
+            return 0.0
+
     def _compile_pattern(self) -> Optional[bytes]:
         """
         Compile the receive pattern into a regex that handles wildcards.
@@ -54,8 +74,12 @@ class ReceiveSequence:
                 return re.compile(pattern_str.encode('latin-1'))
                 
             elif self.receive_format == "ascii":
-                # For ASCII, ?? represents any character
-                pattern_str = self.receive_data.replace("??", ".")
+                # '??' is the only wildcard; everything else is a literal.
+                # Escape the literal runs, or regex metacharacters that occur
+                # naturally in payloads ($, ., *, +, (, [ ...) silently change
+                # what matches - e.g. "PRICE $1.00" would match nothing at all.
+                literals = self.receive_data.split("??")
+                pattern_str = ANY_BYTE.join(re.escape(part) for part in literals)
                 return re.compile(pattern_str.encode('ascii'))
                 
             elif self.receive_format == "decimal":
@@ -86,7 +110,13 @@ class ReceiveSequence:
                 
                 pattern_str = "".join(pattern_parts)
                 return re.compile(pattern_str.encode('latin-1'))
-                
+
+            log.error(
+                "Sequence '%s': unknown receive format %r (expected one of "
+                "hex, ascii, decimal, binary)", self.name, self.receive_format
+            )
+            return None
+
         except Exception as e:
             log.error("Error compiling pattern for sequence '%s': %s", self.name, e)
             return None
@@ -131,6 +161,7 @@ class SequenceHandler:
         """
         self.config_path = Path(config_path) if config_path else None
         self.sequences: List[ReceiveSequence] = []
+        self.skipped = 0
         
         if config_data is not None:
             # Load from provided data (unified config)
@@ -141,48 +172,68 @@ class SequenceHandler:
         else:
             log.debug("SequenceHandler initialized with no config")
     
-    def load_sequences_from_data(self, sequences_data: list):
-        """Load sequences from provided list data."""
-        self.sequences.clear()
-        
-        try:
-            if not sequences_data:
-                log.debug("No sequences in config data")
-                return
-                
-            for seq_config in sequences_data:
-                sequence = ReceiveSequence(seq_config)
-                self.sequences.append(sequence)
-            
-            log.debug("Loaded %d sequences from config data", len(self.sequences))
+    def load_sequences_from_data(self, sequences_data: list) -> int:
+        """Load sequences from provided list data.
 
-        except Exception as e:
-            log.exception("Error loading sequences from data: %s", e)
+        Each entry is parsed independently: one malformed sequence is skipped
+        and reported rather than aborting the loop, which previously discarded
+        every sequence defined after the bad one.
+
+        Returns:
+            The number of entries that were skipped.
+        """
+        self.sequences.clear()
+        self.skipped = 0
+
+        if not sequences_data:
+            log.debug("No sequences in config data")
+            return 0
+
+        if not isinstance(sequences_data, list):
+            log.error("Sequences section must be a list, got %s",
+                      type(sequences_data).__name__)
+            self.skipped = 1
+            return 1
+
+        for i, seq_config in enumerate(sequences_data):
+            if not isinstance(seq_config, dict):
+                log.error("Sequence %d is %s, expected a mapping - skipped",
+                          i, type(seq_config).__name__)
+                self.skipped += 1
+                continue
+            try:
+                self.sequences.append(ReceiveSequence(seq_config))
+            except Exception as e:
+                log.exception("Sequence %d (%r) failed to load - skipped: %s",
+                              i, seq_config.get('name', '?'), e)
+                self.skipped += 1
+
+        log.debug("Loaded %d sequences from config data (%d skipped)",
+                  len(self.sequences), self.skipped)
+        return self.skipped
     
     def load_sequences(self):
         """Load sequences from YAML configuration file (legacy support)."""
         self.sequences.clear()
-        
-        try:
-            if self.config_path and self.config_path.exists():
-                # Load sequences
-                with open(self.config_path, 'r') as f:
-                    config = yaml.safe_load(f)
-                    log.debug("Found sequence file: %s", self.config_path)
-                
-                if config and 'sequences' in config:
-                    for seq_config in config['sequences']:
-                        sequence = ReceiveSequence(seq_config)
-                        self.sequences.append(sequence)
-                    
-                    log.debug("Loaded %d sequences", len(self.sequences))
-                else:
-                    log.debug("No 'sequences' key found in config file")
-            else:
-                log.debug("Sequence config file not found: %s", self.config_path)
 
+        if not (self.config_path and self.config_path.exists()):
+            log.debug("Sequence config file not found: %s", self.config_path)
+            return
+
+        try:
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            log.debug("Found sequence file: %s", self.config_path)
         except Exception as e:
-            log.exception("Error loading sequences: %s", e)
+            log.exception("Error reading sequence file %s: %s", self.config_path, e)
+            return
+
+        if not (config and 'sequences' in config):
+            log.debug("No 'sequences' key found in config file")
+            return
+
+        # Delegate so file-loaded sequences get the same per-entry isolation.
+        self.load_sequences_from_data(config['sequences'])
     
     def reload_sequences(self, config_data: list = None):
         """

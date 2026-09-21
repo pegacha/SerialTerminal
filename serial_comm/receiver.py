@@ -125,20 +125,38 @@ class SerialReceiver:
             )
             self.thread.start()
 
-    def stop(self):
-        """Stop the receiver thread."""
+    def stop(self) -> bytes:
+        """Stop the receiver thread and return any unframed tail bytes.
+
+        The tail is *returned* rather than pushed through on_frame. stop() is
+        called from the UI thread (disconnect, unmount) and on_frame marshals
+        back onto it, so dispatching here either raises - call_from_thread
+        refuses to run on the app's own thread - or deadlocks against the
+        join() below. Previously it raised, the exception was swallowed, and
+        the last frame received before a disconnect vanished with no trace.
+        Callers log the returned bytes themselves, already on the UI thread.
+
+        Returns:
+            Buffered bytes not yet dispatched as a frame, or b'' if none.
+        """
         log.debug("stopping")
         self.running = False
-
-        # Flush any remaining buffered data
-        if self.buffer:
-            log.debug("flushing %d buffered bytes", len(self.buffer))
-            self._send_buffered_message()
 
         if self.thread:
             self.thread.join(timeout=2)
             if self.thread.is_alive():
+                # Thread still touching self.buffer; leave it alone.
                 log.warning("receiver thread did not stop gracefully")
+                return b''
+            self.thread = None
+
+        # The thread is dead, so the buffer is ours to drain safely.
+        tail = bytes(self.buffer)
+        if tail:
+            log.debug("returning %d unframed tail bytes: %r", len(tail), tail)
+        self.buffer.clear()
+        self.last_receive_time = 0.0
+        return tail
 
     def _send_buffered_message(self):
         """Send the buffered message via callback and clear buffer."""

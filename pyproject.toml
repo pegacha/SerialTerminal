@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "SerialTerminal"
 version = "0.1.0"
 description = "TUI Serial terminal"
-requires-python = ">=3.9"
+requires-python = ">=3.10"  # PEP 604 unions (Path | None) are evaluated at def time
 dependencies = [
     "textual>=0.47.0",
     "pyserial>=3.5",

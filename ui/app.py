@@ -1,11 +1,13 @@
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Static, Button, Select, Input
+from textual.widgets.select import InvalidSelectValueError
 from textual.screen import ModalScreen
 from textual_fspicker import FileOpen, FileSave, Filters
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 import serial
+import threading
 import yaml
 import shutil
 import logging
@@ -47,6 +49,9 @@ class TUIApp(App):
 
     def __init__(self):
         super().__init__()
+        # Provisional; re-read in on_mount, which is guaranteed to run on the
+        # event loop's own thread even if the App was constructed elsewhere.
+        self._app_thread_id = threading.get_ident()
         # Route debug output to a rotating log file instead of stdout/stderr,
         # which would corrupt the full-screen TUI. Tail serialterminal.log
         # (capped at ~4MB across 4 files) to debug serial issues.
@@ -86,6 +91,7 @@ class TUIApp(App):
 
     def on_mount(self):
         """Initialize UI components on mount."""
+        self._app_thread_id = threading.get_ident()
         self.refresh_serial_ports()
         self._apply_serial_config_to_ui()
 
@@ -101,27 +107,56 @@ class TUIApp(App):
         elif 'ui' in self.config and 'theme' in self.config['ui']:
             self.theme = self.config['ui']['theme']
 
-        # Apply loaded serial settings to UI
-        if 'serial' in self.config:
-            try:
-                select = self.query_one("#serial-port-select", Select)
-                baud_input = self.query_one("#serial-baud", Select)
+        # Apply loaded serial settings to UI. Every field saved by
+        # saveUnifiedConfig() must be restored here, or the file and the widgets
+        # disagree and you connect with line settings you never chose.
+        serial_cfg = self.config.get('serial')
+        if isinstance(serial_cfg, dict):
+            restore = [
+                ("#serial-port-select", 'port', 'none'),
+                ("#serial-baud", 'baud_rate', 115200),
+                ("#serial-parity", 'parity', 'N'),
+                ("#serial-bits", 'data_bits', '8'),
+                ("#serial-stop-bits", 'stop_bits', '1'),
+            ]
+            for widget_id, key, default in restore:
+                value = str(serial_cfg.get(key, default))
+                if widget_id == "#serial-port-select" and value == 'none':
+                    continue
+                self._set_select_value(widget_id, value)
 
-                port = self.config['serial'].get('port', 'none')
-                if port != 'none':
-                    select.value = port
+    def _set_select_value(self, widget_id: str, value: str) -> bool:
+        """Set a Select's value, tolerating options that no longer exist.
 
-                baud_input.value = str(self.config['serial'].get('baud_rate', 115200))
+        A saved port can disappear between runs (adapter unplugged). Textual
+        rejects a value outside the current options, so report it instead of
+        letting the whole restore silently abort partway through.
+        """
+        try:
+            select = self.query_one(widget_id, Select)
+        except Exception as e:
+            log.debug("select %s not available: %s", widget_id, e)
+            return False
 
-            except Exception as e:
-                self.log_message(f"Error applying settings to UI: {e}")
+        try:
+            select.value = value
+        except InvalidSelectValueError:
+            self.log_message(
+                f"Saved value {value!r} for {widget_id.lstrip('#')} is not available",
+                'error'
+            )
+            return False
+        return True
 
     def on_unmount(self):
         """Clean up on app close."""
         self._stop_all_repeating_buttons()
         self.saveUnifiedConfig()
         self.saveSettings()
-        self.receiver.stop()
+        tail = self.receiver.stop()
+        if tail:
+            # The log panel is on its way out; the file log is what survives.
+            log.debug("unframed bytes at shutdown: %r", tail)
         self.serial_conn.disconnect()
 
     # ========================================================================
@@ -255,24 +290,27 @@ class TUIApp(App):
             if not isinstance(serial_cfg, dict):
                 return (False, "Serial section must be a dictionary")
         
-        # Validate buttons if present
-        if 'buttons' in config_data:
-            buttons = config_data['buttons']
-            if not isinstance(buttons, list):
-                return (False, "Buttons section must be a list")
-            for i, btn in enumerate(buttons):
-                if 'id' not in btn:
-                    return (False, f"Button {i} missing 'id' field")
-        
-        # Validate sequences if present
-        if 'sequences' in config_data:
-            sequences = config_data['sequences']
-            if not isinstance(sequences, list):
-                return (False, "Sequences section must be a list")
-            for i, seq in enumerate(sequences):
-                if 'name' not in seq:
-                    return (False, f"Sequence {i} missing 'name' field")
-        
+        # Validate buttons and sequences if present. The isinstance check per
+        # entry matters: `'id' not in btn` raises TypeError on a non-container
+        # and does a substring test on a string, so a list like [1, 2] or
+        # ['abc'] either crashed the validator or passed the wrong verdict.
+        for section, required in (('buttons', 'id'), ('sequences', 'name')):
+            if section not in config_data:
+                continue
+            entries = config_data[section]
+            if not isinstance(entries, list):
+                return (False, f"{section.capitalize()} section must be a list")
+            label = section[:-1].capitalize()
+            for i, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    return (
+                        False,
+                        f"{label} {i} must be a mapping, got "
+                        f"{type(entry).__name__}"
+                    )
+                if required not in entry:
+                    return (False, f"{label} {i} missing '{required}' field")
+
         return (True, "")
 
     # ========================================================================
@@ -313,8 +351,13 @@ class TUIApp(App):
     def action_reload_config(self):
         """Reload the unified configuration."""
         try:
+            # Reloading recomposes the button panel, which destroys the widgets
+            # the timers were started from. Stop them first or they keep firing
+            # against the port with nothing on screen to show it.
+            self._stop_all_repeating_buttons()
+
             self.loadUnifiedConfig()
-            
+
             try:
                 control_buttons = self.query_one(DynamicControlButtons)
                 control_buttons.reload_config(self.config.get('buttons', []))
@@ -325,7 +368,12 @@ class TUIApp(App):
 
             button_count = len(self.config.get('buttons', []))
             sequence_count = len(self.sequence_handler.get_active_sequences()) if self.sequence_handler else 0
-            self.log_message(f"Config reloaded: {button_count} buttons, {sequence_count} sequences", 'info')
+            skipped = getattr(self.sequence_handler, 'skipped', 0)
+            summary = f"Config reloaded: {button_count} buttons, {sequence_count} sequences"
+            if skipped:
+                self.log_message(f"{summary} ({skipped} skipped, see log)", 'error')
+            else:
+                self.log_message(summary, 'info')
             
         except Exception as e:
             self.log_message(f"Error reloading config: {e}", 'error')
@@ -451,9 +499,18 @@ class TUIApp(App):
 
         try:
             select = self.query_one("#serial-port-select", Select)
-            select.set_options(port_options)
         except Exception:
-            pass
+            return
+
+        # set_options() resets the selection, so put the current port back if
+        # it survived the rescan - otherwise pressing Refresh silently loses it.
+        previous = select.value
+        select.set_options(port_options)
+        if previous not in (Select.BLANK, 'none'):
+            try:
+                select.value = previous
+            except InvalidSelectValueError:
+                self.log_message(f"Port {previous} is no longer available", 'error')
 
     def _connect_serial(self):
         """Connect to serial port using SerialConnection wrapper."""
@@ -525,7 +582,11 @@ class TUIApp(App):
     def _disconnect_serial(self):
         """Disconnect from serial port."""
         self._stop_all_repeating_buttons()
-        self.receiver.stop()
+        # stop() returns bytes that arrived but never completed a frame; log
+        # them here, on the UI thread, instead of losing them.
+        tail = self.receiver.stop()
+        if tail:
+            self._on_frame_received(tail)
         self.serial_conn.disconnect()
         connect_btn = self.query_one("#serial-connect", Button)
         disconnect_btn = self.query_one("#serial-disconnect", Button)
@@ -624,8 +685,16 @@ class TUIApp(App):
             self.log_message(f"Error sending sequence response: {e}", 'error')
 
     def _on_frame_received_threadsafe(self, frame_bytes: bytes):
-        """Thread-safe wrapper for frame reception."""
-        self.call_from_thread(self._on_frame_received, frame_bytes)
+        """Hand a frame to the UI thread from the receive thread.
+
+        call_from_thread refuses to run on the app's own thread, so fall back to
+        a direct call when we are already there. Without this any future caller
+        on the UI thread loses the frame to a swallowed RuntimeError.
+        """
+        if threading.get_ident() == self._app_thread_id:
+            self._on_frame_received(frame_bytes)
+        else:
+            self.call_from_thread(self._on_frame_received, frame_bytes)
 
     # ========================================================================
     # BUTTON EVENT HANDLERS
@@ -736,18 +805,20 @@ class TUIApp(App):
     def log_message(self, message, type: str = ''):
         """Log a message to the multi-format log panel."""
         try:
-            log = self.query_one(MultiFormatLog)
-            log.log_message(message, type)
+            panel = self.query_one(MultiFormatLog)
+            panel.log_message(message, type)
         except Exception as e:
+            # Named `panel`, not `log`: binding `log` here made it local to the
+            # function, so this very line raised UnboundLocalError and the real
+            # error was never reported.
             log.error("Log error: %s - Message: %r", e, message)
 
     def action_clearlog_message(self):
         """Clear the log window."""
         try:
-            log = self.query_one(MultiFormatLog)
-            log.clear()
-        except:
-            pass
+            self.query_one(MultiFormatLog).clear()
+        except Exception as e:
+            log.debug("clear failed: %s", e)
 
     # ========================================================================
     # APP LIFECYCLE
