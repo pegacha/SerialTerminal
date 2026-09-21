@@ -54,6 +54,12 @@ class ReceiveSequence:
         Compile the receive pattern into a regex that handles wildcards.
         Returns a compiled regex pattern or None if invalid.
         """
+        if not str(self.receive_data).strip():
+            # An empty pattern compiles to an empty regex, which matches every
+            # frame - the sequence would answer every byte that arrived.
+            log.error("Sequence '%s': receive data is empty", self.name)
+            return None
+
         try:
             if self.receive_format == "hex":
                 # Split into per-byte hex tokens (split() collapses whitespace)
