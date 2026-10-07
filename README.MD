@@ -5,7 +5,10 @@ receive in ASCII / hex / decimal / binary, drive the device from configurable
 buttons, and auto-respond to incoming frames with pattern-matched sequences.
 
 Built for embedded work where a plain serial monitor isn't enough — protocol
-bring-up, poll/response emulation, and replaying captured exchanges.
+bring-up, poll/response emulation, and replaying captured exchanges. Runs on
+Windows, macOS and Linux.
+
+![SerialTerminal: serial settings, the four-notation log, Send Command and the button sidebar](docs/screenshots/main.svg)
 
 ---
 
@@ -31,6 +34,10 @@ serialterminal
 python -m serialterminal
 ```
 
+On macOS and most Linux distributions the commands are `pip3` and `python3`.
+On Linux you may need to join the serial group before you can open a port; see
+[Platform notes](#platform-notes).
+
 ### PATH
 
 If `serialterminal` is not recognised after installing, the folder pip put it
@@ -46,7 +53,9 @@ Add it to your user PATH now? [y/N]
 Answering `y` adds the folder to your **user** PATH (no admin rights needed),
 keeping existing `%VAR%` entries intact. Open a new terminal afterwards. The
 question is asked once; the answer is remembered in
-`%LOCALAPPDATA%\SerialTerminal\state.yml`. It isn't asked inside a virtual
+`%LOCALAPPDATA%\SerialTerminal\state.yml` (macOS:
+`~/Library/Application Support/SerialTerminal`; Linux:
+`~/.local/state/serialterminal`). It isn't asked inside a virtual
 environment, where activation manages PATH. On Linux and macOS it prints the
 `export` line for your shell profile instead of editing it.
 
@@ -68,7 +77,7 @@ installed version, which is also shown in the title bar.
 | **Serial Config** | Port, baud, parity, data bits, stop bits, connect/disconnect, rescan ports |
 | **Log** | Four tabs — ASCII, HEX, Decimal, Binary — showing the same traffic in each notation, with filter, pause and recording |
 | **Send Command** | One-off send: format, line ending, checksum, and live validation of what you type |
-| **Control Buttons** | Buttons from `project.yml`, optionally repeating, with their own checksum and line ending |
+| **Control Buttons** | Your saved commands: create and edit them in the button editor; optionally repeating or sent automatically in reply to a received frame |
 
 Every frame is written to all four tabs with one shared timestamp, prefixed
 `[TX]`, `[RX]`, `[Error]` or `[Sequence]`. The ASCII tab names control
@@ -88,6 +97,34 @@ the log instead, capped at about a third of the height. Either way the panel
 scrolls when there are more buttons than fit. Labels longer than about 25
 characters are shortened with `…`; hover a button to see it in full. Under 30
 rows the title line and spacing give way to log rows.
+
+**Button editor.** Create a button with **+ New** (or `Ctrl+N`); edit one by
+right-clicking it, or switch on **Edit** mode and click it - Edit mode is there
+for terminals and trackpads that keep the right button to themselves. Changes
+go straight into `project.yml`.
+
+![The button editor, modelled on Docklight's sequence definition](docs/screenshots/button-editor.svg)
+
+It follows Docklight's sequence definition:
+
+* **1 - Name** - the button's label.
+* **2 - Sequence** - what it sends. **Edit mode** switches between ASCII, HEX,
+  Decimal and Binary and converts the sequence as you switch. In ASCII mode,
+  control characters are written by name - `<CR>`, `<LF>`, `<STX>`, `<ACK>` -
+  the same names the log uses; use HEX for bytes above 7F. **Pos.** shows the
+  byte under the cursor and the total.
+* **3 - Additional settings**
+  * *Repeat* - send every N seconds while toggled on.
+  * *Checksum* - computed over the sequence and appended.
+  * *Line ending* - added after the checksum; ASCII sequences only.
+  * *Auto-send* - also send this button whenever a matching frame is received
+    (`??` matches any byte), optionally after a delay. Its checksum and line
+    ending apply.
+* **Documentation** - shown when you hover over the button.
+* **Delete** (two clicks), **OK**, **Cancel**, **Apply** (save, stay open),
+  **Help**.
+
+Editing a button leaves other buttons' repeats running.
 
 **Send Command.** The input is checked as you type against the selected
 format: a red border and a reason (`'G' is not a hex digit`) mean it would not
@@ -118,6 +155,8 @@ Lines look like:
 2026-10-06 16:07:23.544 RX   50 4F 4E 47 0D 0A  |PONG..|
 ```
 
+![Filtering the HEX tab for Modbus frames while recording](docs/screenshots/filter-record.svg)
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |
@@ -126,7 +165,8 @@ Lines look like:
 | `Ctrl+W` | Clear the log |
 | `Ctrl+O` | Open `project.yml` in `$VISUAL`/`$EDITOR` (Notepad on Windows), then reload |
 | `Ctrl+L` | Reload `project.yml` |
-| `Ctrl+I` | Import config (`.yml`, `.yaml`, or Docklight `.ptp`) |
+| `Ctrl+T` | Import config (`.yml`, `.yaml`, or Docklight `.ptp`) |
+| `Ctrl+N` | New button (opens the button editor) |
 | `Ctrl+E` | Export current config to a `.yml` file |
 | `Ctrl+F` | Filter the log; `Esc` closes |
 | `Ctrl+B` | Pause / resume the log view |
@@ -151,8 +191,8 @@ Two files, with different jobs:
   cp project.example.yml project.yml
   ```
 
-  or load `project.example.yml` with `Ctrl+I`. To share a config, export a copy
-  with `Ctrl+E`; `Ctrl+I` imports one (YAML or Docklight `.ptp`).
+  or load `project.example.yml` with `Ctrl+T`. To share a config, export a copy
+  with `Ctrl+E`; `Ctrl+T` imports one (YAML or Docklight `.ptp`).
 * **`settings.yml`** — per-machine preferences (theme, last imported path).
   Not committed; copy `settings.example.yml` to start. Created with defaults on
   first launch if missing.
@@ -212,9 +252,17 @@ buttons:
     format: ascii        # ascii | hex | decimal | binary
     line_ending: crlf    # optional, default none
     checksum: none       # optional, default none
-    tooltip: Send a ping  # optional
+    tooltip: Send a ping  # optional; the editor's Documentation box
     repeat: 1000         # optional: ms between repeats; omit or 0 for one-shot
+    auto_send:           # optional: also send this when a matching frame arrives
+      receive:
+        data: '05'       # pattern; ?? matches any byte
+        format: hex
+      delay: 0           # ms to wait before sending
 ```
+
+The button editor reads and writes exactly these fields; anything else in an
+entry is kept as it is.
 
 Use `line_ending` rather than writing `\r\n` into `message`. Inside single
 quotes YAML keeps backslashes literally, so `'PING\r\n'` sends a
@@ -223,7 +271,11 @@ backslash, an `r`, a backslash and an `n`. Buttons use only their own
 
 A button with `repeat` greater than 0 toggles: first press starts the interval
 and highlights the button, second press stops it. Repeats also stop on
-disconnect and on config reload.
+disconnect and on a config reload (`Ctrl+L`), but not when another button is
+edited.
+
+A button with `auto_send` works like a sequence whose reply is the button
+itself - use whichever fits. Sequences are what a Docklight import produces.
 
 ### Sequences
 
@@ -287,13 +339,40 @@ reports it in `serialterminal.log`.
 
 ### Importing from Docklight
 
-`Ctrl+I` on a `.ptp` file converts Docklight send/receive definitions into
+`Ctrl+T` on a `.ptp` file converts Docklight send/receive definitions into
 buttons and sequences. Docklight's `##` data markers become `??` wildcards.
 The current `project.yml` is backed up to `project.backup.yml` first.
 
 The parser assumes the field layout of the `.ptp` files it was written against
 and does no bounds checking, so an unexpected file shape will report an error
 rather than import partially.
+
+---
+
+## Platform notes
+
+**Windows.** Ports are `COM3`, `COM4`, ... "Access is denied" when connecting
+means another program (a terminal, Docklight, a vendor tool) already has the
+port open. `Ctrl+O` opens `project.yml` in Notepad unless `$VISUAL`/`$EDITOR`
+is set.
+
+**macOS.** Ports are `/dev/cu.usbserial-*` or `/dev/cu.usbmodem*`. Use the
+`cu.*` devices, not `tty.*`, which wait for a carrier signal. `Ctrl+O` uses
+`$VISUAL`/`$EDITOR`, then `nano`, then `vi`.
+
+**Linux.** Ports are `/dev/ttyUSB*` (USB-serial adapters) and `/dev/ttyACM*`
+(boards with native USB). Opening one needs membership of the serial group:
+
+```bash
+sudo usermod -aG dialout $USER
+```
+
+(`uucp` instead of `dialout` on Arch), then log out and back in. The app says so
+if a port is refused. `Ctrl+O` uses `$VISUAL`/`$EDITOR`, then `nano`, then `vi`.
+
+**All platforms.** Docklight `.ptp` files are read in the Windows ANSI encoding
+they're saved in, so accented labels import correctly everywhere. Config files
+are UTF-8.
 
 ---
 
@@ -333,8 +412,8 @@ python -m pytest
 
 No serial hardware needed: the suite drives a fake connection and Textual's
 headless pilot. Tests run in a temp directory, so a run never touches your own
-`project.yml`. CI runs them on 3.10-3.14, on Windows and Linux, and separately
-builds a wheel and installs it into a clean environment.
+`project.yml`. CI runs them on Python 3.10-3.14 on Windows, macOS and Linux,
+and separately builds a wheel and installs it into a clean environment.
 
 `Ctrl+R` reloads `serialterminal/ui/styles.tcss` in place. For Textual's own
 file watcher and dev console, install the dev tools (not a project dependency):
@@ -352,8 +431,10 @@ textual run --dev serialterminal.ui.app:TUIApp
 ```
 serialterminal/
   __main__.py                    entry point (console script and python -m)
+  path_setup.py                  first-launch PATH offer, --add-to-path
   ui/app.py                      App: bindings, config, serial and send/receive glue
   ui/widgets/                    serial bar, log panel, quick send, control buttons
+  ui/widgets/button_editor.py    the button editor
   ui/styles.tcss                 styling
   serial_comm/connection.py      pyserial wrapper
   serial_comm/receiver.py        RX thread with baud-derived frame gap detection

@@ -4,6 +4,42 @@ All notable changes to SerialTerminal. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-07
+
+### Added
+
+- **Button editor**, modelled on Docklight's sequence definition: name,
+  sequence with an edit mode that converts between ASCII, HEX, Decimal and
+  Binary (control characters shown as `<CR>`, `<LF>`, ... in ASCII) and a byte
+  position indicator, then Repeat, Checksum, Line ending and Auto-send tabs and
+  a documentation box (the button's tooltip). Delete / OK / Cancel / Apply /
+  Help. Changes are written straight to `project.yml`.
+- Open it with **+ New** or `Ctrl+N`, by **right-clicking** a button, or with
+  **Edit** mode (click a button to edit it) for terminals that keep the right
+  mouse button to themselves.
+- **Auto-send**: a button can also answer automatically when a matching frame
+  is received (`??` wildcard, optional delay), using its own checksum and line
+  ending - Docklight's receive-sequence answer.
+- macOS in CI, alongside Windows and Linux.
+- Platform-specific hints when a port won't open: the `dialout` group on
+  Linux, `/dev/cu.*` on macOS, port-in-use on Windows.
+
+### Changed
+
+- **Import is `Ctrl+T`.** Terminals send Ctrl+I and Tab as the same byte, so on
+  macOS and Linux `Ctrl+I` moved focus instead; it still works as an alias
+  where the terminal can tell them apart.
+- Editing a button no longer stops other buttons' repeats (a full reload,
+  `Ctrl+L`, still does).
+- On macOS the first-launch state lives in `~/Library/Application Support`.
+
+### Fixed
+
+- Docklight `.ptp` files with accented labels failed to import on macOS and
+  Linux: they're in the Windows ANSI code page, and are now decoded as such.
+- Config files are read and written as UTF-8 on every platform instead of the
+  platform's default encoding.
+
 ## [0.2.0] - 2026-10-07
 
 First tagged release.
@@ -68,4 +104,5 @@ First tagged release.
 - Recording releases its file even if the final write fails.
 - Every log tab no longer reserves an empty scrollbar row.
 
+[0.3.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.2.0
