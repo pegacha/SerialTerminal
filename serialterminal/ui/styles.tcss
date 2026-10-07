@@ -269,3 +269,207 @@ FileSystemPickerScreen InputBar Button {
     padding: 0 1;
     color: $text-muted;
 }
+
+/* ---- Control button toolbar ---------------------------------------------- */
+
+#buttons-toolbar {
+    height: 1;
+    margin-bottom: 1;
+}
+
+.toolbar-button {
+    width: auto;
+    min-width: 8;
+    margin-right: 1;
+}
+
+/* Edit mode: a click opens the editor instead of sending, so make it
+   unmistakable that the buttons are not live. */
+#control-buttons.-editing {
+    border: round $warning;
+}
+
+#control-buttons.-editing .control-button {
+    background: $warning-muted;
+}
+
+/* ---- Button editor (Docklight-style sequence definition) ----------------- */
+
+ButtonEditor {
+    align: center middle;
+    background: $background 60%;
+}
+
+#editor {
+    width: 100;
+    max-width: 100%;
+    height: 34;
+    max-height: 100%;
+    padding: 0 1;
+    border: round $primary;
+    border-title-align: left;
+    border-title-style: bold;
+    background: $surface;
+}
+
+/* Scrolls on short terminals; the OK / Cancel row stays put below it. */
+#editor-body {
+    height: 1fr;
+}
+
+.ed-row {
+    height: auto;
+    margin-top: 1;
+}
+
+.ed-label {
+    width: 16;
+    text-style: bold;
+}
+
+.ed-sublabel {
+    width: auto;
+    margin-right: 1;
+    color: $text-muted;
+}
+
+#ed-name {
+    width: 1fr;
+}
+
+#ed-mode {
+    layout: horizontal;
+    width: auto;
+    height: auto;
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+#ed-mode RadioButton {
+    width: auto;
+    margin-right: 1;
+    background: transparent;
+}
+
+#ed-pos {
+    width: 1fr;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+#ed-sequence {
+    height: 6;
+}
+
+#ed-error {
+    height: auto;
+    min-height: 1;
+    color: $error;
+}
+
+.ed-rule {
+    margin: 0;
+}
+
+.ed-settings {
+    height: auto;
+}
+
+#ed-tabs {
+    width: 1fr;
+    height: auto;
+}
+
+#ed-tabs TabPane {
+    height: auto;
+    padding: 1 1 0 1;
+}
+
+.ed-inline {
+    height: auto;
+    margin-top: 1;
+}
+
+.ed-inline Label {
+    width: auto;
+    margin-right: 1;
+}
+
+#ed-repeat-seconds, #ed-auto-delay {
+    width: 8;
+    margin-right: 1;
+}
+
+#ed-auto-format {
+    width: 12;
+    margin-right: 1;
+}
+
+#ed-auto-data {
+    width: 1fr;
+}
+
+#ed-checksum, #ed-eol {
+    width: 24;
+}
+
+.ed-note {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+.ed-doc-label {
+    margin-top: 1;
+    text-style: bold;
+}
+
+#ed-doc {
+    height: 4;
+}
+
+#ed-buttons {
+    height: 1;
+    margin-top: 1;
+}
+
+#ed-buttons Button {
+    width: auto;
+    min-width: 10;
+    margin-left: 1;
+}
+
+.ed-spacer {
+    width: 1fr;
+}
+
+/* Checkboxes: Textual's default is a tall bordered box that also truncates
+   its label - here they sit inline like the rest of the form. */
+#editor Checkbox {
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+/* Compact inputs keep only a faint tint ($boost is a few percent of the
+   foreground), invisible on this panel: fields read as plain text. */
+#editor Input {
+    background: $surface-lighten-2;
+}
+
+/* The radio set highlights its keyboard cursor even when unfocused, which
+   made the first mode (ASCII) look selected whatever the real mode was. Only
+   show the cursor while the set has focus; the dot shows the mode. */
+#ed-mode:blur > RadioButton.-selected > .toggle--label {
+    background: transparent;
+}
+
+.ed-note-tight {
+    margin-top: 0;
+}
+
+/* Under 30 rows the stacked button panel is only a couple of rows tall; the
+   gap under the toolbar pushed every button out of view. */
+.-short #buttons-toolbar {
+    margin-bottom: 0;
+}

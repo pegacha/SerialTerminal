@@ -5,9 +5,17 @@ the three can't drift apart, and so the quick-send box can validate input as
 it is typed with exactly the rules that will apply when it is sent.
 """
 
+import re
+import string
+
 from serialterminal.utils.checksum import checksum_bytes
+from serialterminal.utils.formatting import CONTROL_NAMES
 
 FORMATS = ("ascii", "hex", "decimal", "binary")
+
+# "<cr>" -> 0x0D etc., for the editor's ASCII mode (case-insensitive).
+_TOKEN_BYTES = {name.lower(): byte for byte, name in CONTROL_NAMES.items()}
+_TOKEN = re.compile(r"<[A-Za-z0-9]{2,3}>")
 
 # key -> (label shown in the UI, bytes appended)
 LINE_ENDINGS = {
@@ -84,3 +92,104 @@ def build_frame(text, fmt: str, checksum: str = "none", line_ending: str = "none
     if fmt not in ("hex", "decimal", "binary"):
         data += eol
     return data
+
+
+# ----------------------------------------------------------------------------
+# The button editor's notation
+# ----------------------------------------------------------------------------
+#
+# Like the config notation, except that in ASCII mode control characters are
+# written as <CR>, <LF>, <STX>, ... - the names the log's ASCII tab shows -
+# instead of being invisible. That makes every byte below 0x80 visible and
+# typable in ASCII mode, so switching the edit mode between ASCII, HEX,
+# Decimal and Binary converts the sequence without losing anything.
+
+def parse_editor_text(text, fmt: str) -> bytes:
+    """Bytes for `text` written in the editor's notation for `fmt`.
+
+    Raises ValueError with a message fit to show the user.
+    """
+    text = "" if text is None else str(text)
+    if fmt != "ascii":
+        return parse_payload(text, fmt)
+
+    out = bytearray()
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "<":
+            match = _TOKEN.match(text, i)
+            if match and match.group(0).lower() in _TOKEN_BYTES:
+                out.append(_TOKEN_BYTES[match.group(0).lower()])
+                i = match.end()
+                continue
+        if ch in "\r\n":
+            raise ValueError("line breaks aren't sent - type <CR> or <LF>, "
+                             "or pick one on the Line ending tab")
+        if not (32 <= ord(ch) < 127):
+            raise ValueError(f"{ch!r} isn't printable ASCII - switch to HEX to enter it")
+        out.append(ord(ch))
+        i += 1
+    return bytes(out)
+
+
+def format_editor_text(data: bytes, fmt: str) -> str:
+    """`data` in the editor's notation for `fmt` - the inverse of parse_editor_text.
+
+    Raises ValueError if ASCII mode can't show it (a byte above 0x7F).
+    """
+    if fmt == "hex":
+        return " ".join(f"{b:02X}" for b in data)
+    if fmt == "decimal":
+        return " ".join(str(b) for b in data)
+    if fmt == "binary":
+        return " ".join(f"{b:08b}" for b in data)
+    parts = []
+    for b in data:
+        if b in CONTROL_NAMES:
+            parts.append(CONTROL_NAMES[b])
+        elif 32 <= b < 127:
+            parts.append(chr(b))
+        else:
+            raise ValueError(f"byte 0x{b:02X} has no ASCII form - keep it in HEX")
+    return "".join(parts)
+
+
+def config_message(data: bytes, fmt: str) -> str:
+    """How `data` is stored as a button's `message` for `fmt`.
+
+    Canonical spacing for the numeric notations. For ASCII the real characters,
+    control characters included: YAML writes them as escapes ("PING\\r\\n") and
+    parse_payload reads them back, so a button made in the editor sends
+    exactly what the editor showed.
+    """
+    if fmt == "ascii":
+        return data.decode("ascii")
+    return format_editor_text(data, fmt)
+
+
+def editor_byte_position(text: str, fmt: str, offset: int) -> int:
+    """How many whole bytes come before character `offset` - the editor's "Pos.".
+
+    Tolerant of text that doesn't parse yet; it counts what it can.
+    """
+    prefix = (text or "")[:max(0, offset)]
+    if fmt == "hex":
+        prefix = prefix.replace("0x", "").replace("0X", "")
+        return sum(ch in string.hexdigits for ch in prefix) // 2
+    if fmt == "binary":
+        return sum(ch in "01" for ch in prefix) // 8
+    if fmt == "decimal":
+        tokens = prefix.split()
+        if tokens and not prefix[-1].isspace():
+            tokens = tokens[:-1]  # the number under the cursor isn't finished
+        return len(tokens)
+    count, i = 0, 0
+    while i < len(prefix):
+        match = _TOKEN.match(prefix, i)
+        if prefix[i] == "<" and match and match.group(0).lower() in _TOKEN_BYTES:
+            i = match.end()
+        else:
+            i += 1
+        count += 1
+    return count

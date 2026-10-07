@@ -19,11 +19,16 @@ import logging
 from serialterminal import __version__
 from serialterminal.ui.widgets.log_panel import MultiFormatLog
 from serialterminal.ui.widgets.serial_bar import SerialBar
-from serialterminal.ui.widgets.dynamic_control_buttons import DynamicControlButtons
+from serialterminal.ui.widgets.dynamic_control_buttons import (
+    DynamicControlButtons, RESERVED_IDS, _widget_id,
+)
+from serialterminal.ui.widgets.button_editor import ButtonEditor
 from serialterminal.ui.widgets.quick_send import QuickSend
 from serialterminal.ui.widgets.file_pickers import CompactFileOpen, CompactFileSave
 
-from serialterminal.sequence_handler import SequenceHandler, ReceiveSequence
+from serialterminal.sequence_handler import (
+    SequenceHandler, ReceiveSequence, sequences_from_buttons,
+)
 
 from serialterminal.serial_comm.connection import SerialConnection
 from serialterminal.serial_comm.receiver import SerialReceiver
@@ -38,6 +43,32 @@ log = logging.getLogger("serialterminal.app")
 
 class _UnreadableConfig(Exception):
     """project.yml exists but cannot be used as a config."""
+
+
+def connection_hint(error: Exception, platform: str = None) -> str | None:
+    """What to do about a failed port open, for the errors that differ by OS.
+
+    pyserial passes the OS message through, which names the symptom but not
+    the fix - and the fix depends on the platform.
+    """
+    import sys
+
+    platform = platform or sys.platform
+    text = str(error).lower()
+    errno = getattr(error, "errno", None)
+    if platform.startswith("linux") and (errno == 13 or "permission denied" in text):
+        return ("Linux only lets members of the serial group open ports. Run "
+                "`sudo usermod -aG dialout $USER` (`uucp` on Arch), then log out and back in.")
+    if platform == "darwin" and ("resource busy" in text or errno == 16):
+        return ("The port is busy: another program has it open. On macOS use the "
+                "/dev/cu.* device rather than /dev/tty.*.")
+    if platform == "win32" and ("access is denied" in text or "permissionerror" in text):
+        return ("Windows reports Access denied when another program (a terminal, "
+                "Docklight, a vendor tool) already has the port open. Close it and retry.")
+    if "could not open port" in text and ("no such file" in text or "filenotfound" in text
+                                           or "cannot find" in text):
+        return "The port has gone away (unplugged?). Press Refresh to rescan."
+    return None
 
 
 def import_filters() -> Filters:
@@ -70,8 +101,11 @@ class TUIApp(App):
         Binding("ctrl+w", "clearlog_message", "clear", show=True, tooltip="Clear the log"),
         Binding("ctrl+o", "edit_config", "edit", show=True, tooltip="Edit project.yml"),
         Binding("ctrl+l", "reload_config", "reload", show=True, tooltip="Reload project.yml"),
-        Binding("ctrl+i", "import_config", "import", show=True, tooltip="Import a config (.yml or Docklight .ptp)"),
+        # Not Ctrl+I alone: terminals send Ctrl+I and Tab as the same byte
+        # (0x09), so on macOS and Linux it arrived as Tab and moved focus.
+        Binding("ctrl+t,ctrl+i", "import_config", "import", show=True, tooltip="Import a config (.yml or Docklight .ptp)"),
         Binding("ctrl+e", "export_config", "export", show=True, tooltip="Export the config to a .yml file"),
+        Binding("ctrl+n", "new_button", "new button", show=False, tooltip="Create a control button"),
         Binding("ctrl+r", "reload_css", "reload css", show=False)
     ]
 
@@ -242,11 +276,11 @@ class TUIApp(App):
                         'last_used': None
                     }
                 }
-                with open(self.settings_file, 'w') as f:
+                with open(self.settings_file, 'w', encoding='utf-8') as f:
                     yaml.dump(default_settings, f, default_flow_style=False)
                 self.settings = default_settings
             else:
-                with open(self.settings_file, 'r') as f:
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
                     self.settings = yaml.safe_load(f) or {}
                     
         except Exception as e:
@@ -261,7 +295,7 @@ class TUIApp(App):
                 self.settings['ui'] = {}
             self.settings['ui']['theme'] = self.theme
             
-            with open(self.settings_file, 'w') as f:
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
                 yaml.dump(self.settings, f, default_flow_style=False)
                 
         except Exception as e:
@@ -293,11 +327,7 @@ class TUIApp(App):
 
                 log.debug("Loaded configuration from %s", self.config_file)
                 
-                # Initialize sequence handler if sequences exist
-                if 'sequences' in self.config:
-                    self.sequence_handler = SequenceHandler(config_data=self.config['sequences'])
-                else:
-                    self.sequence_handler = SequenceHandler(config_data=[])
+                self.sequence_handler = self._build_sequence_handler()
                 
             else:
                 log.debug("No project.yml found - starting with defaults")
@@ -351,14 +381,16 @@ class TUIApp(App):
                 'error'
             )
 
-    def save_config(self):
-        """Save unified configuration to project.yml"""
+    def save_config(self) -> bool:
+        """Save unified configuration to project.yml. Returns True if written."""
+        self.last_save_error = None
         if getattr(self, 'config_unreadable', None):
             # Writing now would replace the user's file - typo and all, but
             # otherwise intact - with the empty fallback config.
             log.warning("Not saving %s: it could not be read (%s)",
                         self.config_file, self.config_unreadable)
-            return
+            self.last_save_error = f"{self.config_file} could not be read"
+            return False
         try:
             # Update serial settings from UI if available
             try:
@@ -397,13 +429,16 @@ class TUIApp(App):
                 self.config.pop('ui', None)
 
             # Save to file
-            with open(self.config_file, 'w') as f:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
                 yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
             
             log.debug("Configuration saved to %s", self.config_file)
-            
+            return True
+
         except Exception as e:
             log.error("Error saving config: %s", e)
+            self.last_save_error = str(e)
+            return False
 
     def validate_config(self, config_data: dict) -> tuple[bool, str]:
         """
@@ -521,7 +556,7 @@ class TUIApp(App):
                     self.log_message(f"Imported Docklight config", 'info')
                 elif file_path.suffix.lower() in {'.yml', '.yaml'}:
                     # YAML format
-                    with open(file_path, 'r') as f:
+                    with open(file_path, 'r', encoding='utf-8') as f:
                         new_config = yaml.safe_load(f)
                 else:
                     self.log_message(f"Unsupported file type: {file_path.suffix}", 'error')
@@ -537,7 +572,7 @@ class TUIApp(App):
                 # Backup current config
                 if self.config:
                     backup_file = Path("project.backup.yml")
-                    with open(backup_file, 'w') as f:
+                    with open(backup_file, 'w', encoding='utf-8') as f:
                         yaml.dump(self.config, f, default_flow_style=False)
                     self.log_message(f"Backed up to {backup_file.name}", 'info')
                 
@@ -583,7 +618,7 @@ class TUIApp(App):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Save config
-                with open(file_path, 'w') as f:
+                with open(file_path, 'w', encoding='utf-8') as f:
                     yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
                 
                 self.log_message(f"Config exported to: {file_path.name}", 'info')
@@ -714,6 +749,9 @@ class TUIApp(App):
             self.log_message(f"Invalid configuration value: {e}", 'error')
         except serial.SerialException as e:
             self.log_message(f"Error connecting to serial: {e}", 'error')
+            hint = connection_hint(e)
+            if hint:
+                self.log_message(hint, 'error')
         except Exception as e:
             self.log_message(f"Unexpected error: {e}", 'error')
 
@@ -1032,6 +1070,125 @@ class TUIApp(App):
             self.log_message(reason, 'error')
         else:
             self.log_message(f"Recording stopped: {path}", 'info')
+
+    # ========================================================================
+    # BUTTON EDITOR
+    # ========================================================================
+
+    def _build_sequence_handler(self) -> SequenceHandler:
+        """Sequences from the `sequences` section plus buttons set to auto-send."""
+        sequences = self.config.get('sequences', [])
+        derived = sequences_from_buttons(self.config.get('buttons'))
+        if isinstance(sequences, list):
+            return SequenceHandler(config_data=sequences + derived)
+        # A malformed section is still handed over as-is so it gets reported.
+        return SequenceHandler(config_data=sequences)
+
+    def action_new_button(self):
+        self.open_button_editor(None)
+
+    def on_dynamic_control_buttons_edit_requested(self, message: DynamicControlButtons.EditRequested):
+        self.open_button_editor(message.index)
+
+    def open_button_editor(self, index: int | None):
+        """Open the editor on project.yml's buttons[index], or on a new button."""
+        problem = self._buttons_section_problem()
+        if problem:
+            self.log_message(f"Can't edit buttons: {problem}", 'error')
+            return
+        buttons = self.config.get('buttons') or []
+        entry = None
+        if index is not None:
+            if not 0 <= index < len(buttons):
+                self.log_message(f"Button {index + 1} no longer exists - reload (Ctrl+L)", 'error')
+                return
+            entry = buttons[index]
+        self.push_screen(ButtonEditor(entry, index))
+
+    def _buttons_section_problem(self) -> str | None:
+        if self.config_unreadable:
+            return f"{self.config_file} couldn't be read - fix it (Ctrl+O) and reload (Ctrl+L)"
+        buttons = self.config.get('buttons')
+        if buttons is not None and not isinstance(buttons, list):
+            return f"'buttons' in {self.config_file} isn't a list - fix it (Ctrl+O) first"
+        return None
+
+    def _new_button_id(self, label: str) -> str:
+        """A legal id for a new button, unique in project.yml and among the app's widgets."""
+        taken = set(RESERVED_IDS)
+        taken.update(str(b.get('id')) for b in self.config.get('buttons') or []
+                     if isinstance(b, dict))
+        base = _widget_id(label.lower(), len(taken)) if label.strip() else "button"
+        candidate, n = base, 2
+        while candidate in taken:
+            candidate, n = f"{base}-{n}", n + 1
+        return candidate
+
+    def _stop_repeat_for_index(self, index: int):
+        """Stop the repeat timer of the button built from buttons[index], if running."""
+        for button in self.query(".control-button"):
+            if getattr(button, 'source_index', None) == index and button.id in self.repeating_buttons:
+                self._stop_repeating_button(button.id)
+                button.remove_class("button-repeating")
+
+    async def save_button(self, index: int | None, entry: dict) -> int:
+        """Write a button from the editor into project.yml and show it.
+
+        Returns its index in the buttons list. Raises ValueError, with a message
+        for the user, if it can't be saved.
+        """
+        problem = self._buttons_section_problem()
+        if problem:
+            raise ValueError(problem)
+        buttons = self.config.setdefault('buttons', [])
+        if buttons is None:
+            buttons = self.config['buttons'] = []
+
+        if index is None:
+            entry = {'id': self._new_button_id(entry.get('label', '')), **entry}
+            buttons.append(entry)
+            index = len(buttons) - 1
+        else:
+            self._stop_repeat_for_index(index)  # its command may have changed
+            buttons[index] = entry
+
+        if not self.save_config():
+            raise ValueError(f"Couldn't write {self.config_file}: {self.last_save_error}")
+        await self._refresh_buttons_and_sequences()
+        self.log_message(f"Saved button '{entry.get('label', entry.get('id'))}'", 'info')
+        return index
+
+    async def delete_button(self, index: int):
+        buttons = self.config.get('buttons') or []
+        if not 0 <= index < len(buttons):
+            return
+        self._stop_repeat_for_index(index)
+        removed = buttons.pop(index)
+        if not self.save_config():
+            buttons.insert(index, removed)
+            self.log_message(f"Couldn't write {self.config_file}: {self.last_save_error}", 'error')
+            return
+        await self._refresh_buttons_and_sequences()
+        label = removed.get('label', removed.get('id')) if isinstance(removed, dict) else removed
+        self.log_message(f"Deleted button '{label}'", 'info')
+
+    async def _refresh_buttons_and_sequences(self):
+        """Rebuild the panel and the auto-send sequences after an edit.
+
+        Unlike a full reload (Ctrl+L), other buttons' repeat timers keep
+        running: they hold their own command, so they only need their
+        highlight restored on the rebuilt widgets.
+        """
+        panel = self.query_one(DynamicControlButtons)
+        await panel.rebuild(self.config.get('buttons', []))
+        self.sequence_handler = self._build_sequence_handler()
+        for button_id in list(self.repeating_buttons):
+            try:
+                self.query_one(f"#{button_id}", Button).add_class("button-repeating")
+            except NoMatches:
+                self._stop_repeating_button(button_id)
+        for problem in panel.problems:
+            self.log_message(problem, 'error')
 
     async def action_reload_css(self) -> None:
         """Re-read styles.tcss without restarting (Ctrl+R).

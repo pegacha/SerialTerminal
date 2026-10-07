@@ -134,6 +134,9 @@ def _state_file() -> Path:
     if _windows():
         base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
         return Path(base) / "SerialTerminal" / "state.yml"
+    if sys.platform == "darwin":
+        # macOS keeps per-user app state here, not in ~/.local (an XDG-ism).
+        return Path.home() / "Library" / "Application Support" / "SerialTerminal" / "state.yml"
     base = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
     return Path(base) / "serialterminal" / "state.yml"
 

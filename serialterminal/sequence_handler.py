@@ -223,7 +223,7 @@ class SequenceHandler:
             return
 
         try:
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             log.debug("Found sequence file: %s", self.config_path)
         except Exception as e:
@@ -279,3 +279,44 @@ class SequenceHandler:
             seq.active = not seq.active
             return seq.active
         return False
+
+def sequences_from_buttons(buttons) -> list:
+    """Receive sequences for the buttons that have `auto_send` set.
+
+    A button can double as an automatic answer, as in Docklight: when a frame
+    matching its `auto_send.receive` pattern arrives, the button's own command
+    (with its checksum and line ending) is sent, after `auto_send.delay` ms.
+    Expressed as ordinary sequence configs so matching, delays and logging are
+    exactly those of the `sequences` section.
+
+    Button entries that aren't mappings are ignored here; the button panel
+    reports them.
+    """
+    derived = []
+    if not isinstance(buttons, list):
+        return derived
+    for button in buttons:
+        if not isinstance(button, dict):
+            continue
+        auto = button.get('auto_send')
+        if not isinstance(auto, dict) or auto.get('enabled', True) is False:
+            continue
+        receive = auto.get('receive') if isinstance(auto.get('receive'), dict) else {}
+        label = button.get('label') or button.get('id') or 'button'
+        derived.append({
+            'name': f"{label} (auto-send)",
+            'active': True,
+            'delay': auto.get('delay', 0),
+            'comment': f"Auto-sent: {label}",
+            'receive': {
+                'data': receive.get('data', ''),
+                'format': receive.get('format', 'hex'),
+            },
+            'send': {
+                'data': button.get('message', ''),
+                'format': button.get('format', 'ascii'),
+                'checksum': button.get('checksum', 'none'),
+                'line_ending': button.get('line_ending', 'none'),
+            },
+        })
+    return derived

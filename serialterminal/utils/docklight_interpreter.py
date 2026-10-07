@@ -14,8 +14,17 @@ class DocklightConfigInterpreter:
         
     def parse_file(self, filepath: Path) -> Dict[str, Any]:
         """Parse Docklight config file and return unified config dict."""
-        with open(filepath, 'r') as f:
-            lines = [line.strip() for line in f.readlines()]
+        raw = Path(filepath).read_bytes()
+        # Docklight is a Windows program and writes .ptp files in the ANSI
+        # code page, not UTF-8. Reading with the platform default happened to
+        # work on Windows but raised UnicodeDecodeError on macOS and Linux as
+        # soon as a label had an accented character. UTF-8 first (a file
+        # re-saved by a modern editor), then cp1252, which can't fail.
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252", errors="replace")
+        lines = [line.strip() for line in text.splitlines()]
         
         i = 0
         while i < len(lines):
@@ -199,7 +208,7 @@ class DocklightConfigInterpreter:
         if output_path is None:
             output_path = Path("project.yml")
         
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         
         print(f"Converted Docklight config {input_path} -> {output_path}")

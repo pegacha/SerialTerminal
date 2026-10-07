@@ -1,6 +1,9 @@
+from textual import events
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import Button, Static
-from textual.containers import Container, ItemGrid
+from textual.containers import Container, Horizontal, ItemGrid
 from pathlib import Path
 import logging
 import re
@@ -15,7 +18,8 @@ MAX_COLUMN_WIDTH = 28
 # Ids the app's own widgets use. A control button sharing one would be routed
 # as that widget - a button with id "serial-connect" would connect the port.
 RESERVED_IDS = frozenset({
-    "buttons-container", "control-buttons", "log-filter", "log-status",
+    "buttons-container", "buttons-toolbar", "new-button", "edit-buttons",
+    "control-buttons", "log-filter", "log-status",
     "log-tabs", "multi-format-log", "no-buttons-msg", "quick-send-horizontal",
     "quick-send-input", "quick-send-window", "refresh-ports", "send-button",
     "send-checksum", "send-format-select", "send-line-ending", "serial-bar",
@@ -99,9 +103,39 @@ def normalize_buttons(raw) -> tuple[list[dict], list[str]]:
     return buttons, problems
 
 
+class ControlButton(Button):
+    """A configured button. Left-click sends it; right-click opens it in the editor.
+
+    `source_index` is the entry's position in project.yml's `buttons` list, so
+    the editor writes back to the right entry even when ids were repaired.
+    """
+
+    def __init__(self, *args, source_index: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.source_index = source_index
+
+    async def _on_click(self, event: events.Click) -> None:
+        if event.button == 3:
+            # Right-click edits and never sends. Some terminals keep the right
+            # button for themselves, which is why Edit mode exists as well.
+            event.stop()
+            self.post_message(DynamicControlButtons.EditRequested(self.source_index))
+            return
+        # Button._on_click is a coroutine: calling it without awaiting does
+        # nothing, so a left-click would silently not send.
+        await super()._on_click(event)
+
+
 class DynamicControlButtons(Container):
     """Control buttons panel dynamically loaded from YAML configuration."""
-    
+
+    class EditRequested(Message):
+        """Open the button editor: `index` into project.yml's buttons, or None for a new one."""
+
+        def __init__(self, index: int | None):
+            super().__init__()
+            self.index = index
+
     def __init__(self, config_file: str = None, config_data: list = None, **kwargs):
         """
         Initialize DynamicControlButtons.
@@ -115,7 +149,12 @@ class DynamicControlButtons(Container):
         self.border_title = "Control Buttons"
         self.config_file = Path(config_file) if config_file else None
         self.buttons_config = []
+        self.source_indices: list[int] = []
         self.problems: list[str] = []
+        # Edit mode: clicking a button opens it in the editor instead of
+        # sending it. Survives rebuilds, so you can edit one button after
+        # another.
+        self.editing = False
 
         if config_data is not None:
             # Load from provided data (unified config)
@@ -127,12 +166,44 @@ class DynamicControlButtons(Container):
     def _set_buttons(self, raw):
         """Normalise `raw` (see normalize_buttons) and remember what was wrong."""
         self.buttons_config, self.problems = normalize_buttons(raw)
+        # normalize_buttons keeps every mapping entry, in order, and skips the
+        # rest - so this lines each normalised button up with its source entry.
+        self.source_indices = (
+            [i for i, entry in enumerate(raw) if isinstance(entry, dict)]
+            if isinstance(raw, list) else []
+        )
+
+    async def rebuild(self, raw):
+        """Show `raw` (the buttons section) and wait until it's on screen."""
+        self._set_buttons(raw)
+        await self.recompose()
+
+    def set_editing(self, editing: bool):
+        self.editing = editing
+        self.set_class(editing, "-editing")
+        self.border_title = ("Control Buttons · click one to edit" if editing
+                             else "Control Buttons")
+        try:
+            self.query_one("#edit-buttons", Button).label = "Done" if editing else "Edit"
+        except NoMatches:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "new-button":
+            event.stop()
+            self.post_message(self.EditRequested(None))
+        elif event.button.id == "edit-buttons":
+            event.stop()
+            self.set_editing(not self.editing)
+        elif self.editing and isinstance(event.button, ControlButton):
+            event.stop()  # edit, don't send
+            self.post_message(self.EditRequested(event.button.source_index))
 
     def _load_config(self):
         """Load button configuration from YAML file (legacy support)."""
         try:
             if self.config_file and self.config_file.exists():
-                with open(self.config_file, 'r') as f:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
                 self._set_buttons(config.get('buttons', []) if isinstance(config, dict) else [])
                 log.debug("Loaded %d buttons from %s", len(self.buttons_config), self.config_file)
@@ -145,8 +216,17 @@ class DynamicControlButtons(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the buttons based on YAML configuration."""
+        with Horizontal(id="buttons-toolbar"):
+            yield Button("+ New", id="new-button", classes="toolbar-button", compact=True,
+                         tooltip="Create a button (Ctrl+N)")
+            yield Button("Done" if self.editing else "Edit", id="edit-buttons",
+                         classes="toolbar-button", compact=True,
+                         tooltip="Edit mode: click a button to edit it instead of "
+                                 "sending it. Right-clicking a button also edits it.")
+
         if not self.buttons_config:
-            yield Static("No buttons configured. Edit project.yml (Ctrl+O)", id="no-buttons-msg")
+            yield Static("No buttons yet - press + New (Ctrl+N) or import a config (Ctrl+T)",
+                         id="no-buttons-msg")
             return
         
         # A Horizontal never wraps, so buttons past the right edge were cut
@@ -157,19 +237,20 @@ class DynamicControlButtons(Container):
         longest = max(len(str(b.get('label', 'Button'))) for b in self.buttons_config)
         with ItemGrid(id="buttons-container",
                       min_column_width=min(longest + 4, MAX_COLUMN_WIDTH)):
-            for btn_config in self.buttons_config:
+            for btn_config, source_index in zip(self.buttons_config, self.source_indices):
                 button_id = btn_config['id']  # always legal and unique after normalising
                 label = str(btn_config.get('label', 'Button'))
                 tooltip = btn_config.get('tooltip', '')
                 if not tooltip and len(label) + 4 > MAX_COLUMN_WIDTH:
                     tooltip = label  # it may be ellipsised; hover shows it whole
 
-                button = Button(
+                button = ControlButton(
                     label,
                     id=button_id,
                     classes="control-button",
                     tooltip=tooltip if tooltip else None,
                     compact=True,
+                    source_index=source_index,
                 )
                 # Store message and format as attributes
                 button.message = btn_config.get('message', '')
