@@ -12,7 +12,8 @@ bring-up, poll/response emulation, and replaying captured exchanges.
 ## Requirements
 
 * Python 3.10 or newer (the code uses PEP 604 `X | Y` annotations)
-* `textual >= 4.0`, `pyserial >= 3.5`, `pyyaml >= 6.0.3`, `textual-fspicker >= 0.0.5`
+* `textual >= 4.0`, `pyserial >= 3.5`, `pyyaml >= 6.0.3`, `textual-fspicker >= 0.2.0`
+  (the suite is run against exactly these minimums as well as the latest)
 
 ## Installing
 
@@ -55,7 +56,8 @@ To do it any time, without the prompt:
 python -m serialterminal --add-to-path
 ```
 
-`python -m serialterminal` always works, PATH or not.
+`python -m serialterminal` always works, PATH or not. `--version` prints the
+installed version, which is also shown in the title bar.
 
 ---
 
@@ -69,22 +71,30 @@ python -m serialterminal --add-to-path
 | **Control Buttons** | Buttons from `project.yml`, optionally repeating, with their own checksum and line ending |
 
 Every frame is written to all four tabs with one shared timestamp, prefixed
-`[TX]`, `[RX]`, `[Error]` or `[Sequence]`.
+`[TX]`, `[RX]`, `[Error]` or `[Sequence]`. The ASCII tab names control
+characters (`<STX>`, `<ACK>`, ...) and keeps line terminators visible, so you
+can see whether a device sent `<CR><LF>`, `<LF>` or `<CR>`; a new line starts
+after each one.
 
 Controls are one row tall and meant for the mouse, so most of the screen goes
 to the log. To make everything bigger or smaller, zoom the terminal itself
 (`Ctrl` + `+`/`-` or `Ctrl` + mouse wheel in Windows Terminal); the app has
 no font size of its own.
 
-Control buttons wrap into columns sized to the longest label. The panel takes
-at most about a third of the screen and scrolls (mouse wheel or scrollbar)
-beyond that, so a big button set never squeezes out the log. Labels longer than
-about 24 characters are shortened with `…`; hover a button to see it in full.
+**Layout.** At 100 columns or more, control buttons sit in a sidebar to the
+right of the log, so they never take rows from it. Narrower than that, a
+sidebar would leave the log too thin for a hex frame, so the buttons move under
+the log instead, capped at about a third of the height. Either way the panel
+scrolls when there are more buttons than fit. Labels longer than about 25
+characters are shortened with `…`; hover a button to see it in full. Under 30
+rows the title line and spacing give way to log rows.
 
 **Send Command.** The input is checked as you type against the selected
 format: a red border and a reason (`'G' is not a hex digit`) mean it would not
-send. A failed send keeps your text; only a successful one clears the box.
-The format, line ending and checksum you pick are saved in `project.yml`.
+send. A failed send keeps your text, including a write the port refused (an
+unplugged adapter); only a successful one clears the box, and `[TX]` is logged
+only for bytes that actually went out. The format, line ending and checksum you
+pick are saved in `project.yml`.
 
 **Filter** (`Ctrl+F`). Shows only log entries containing the text,
 case-insensitive. Each tab matches its own notation, so `41 42` finds a frame
@@ -145,6 +155,19 @@ still honoured once, then dropped on the next save.
 
 `project.yml` is rewritten on connect and on exit, so hand-edits to the `serial`
 section are overwritten by whatever the widgets currently show.
+
+**Mistakes in `project.yml` are reported, not fatal.** Problems appear as
+`[Error]` lines in the log at startup and on every reload:
+
+* If the file can't be read at all (a YAML syntax error, or a top level that
+  isn't a mapping), the app starts with an empty config and **will not save over
+  the file**, so a typo never costs you its contents. Fix it (`Ctrl+O`) and
+  reload (`Ctrl+L`).
+* A button entry that isn't a mapping is skipped. A missing, duplicate or
+  illegal `id` (ids are letters, digits, `-` and `_`, not starting with a
+  digit) is replaced on screen with a legal unique one; your file keeps what you
+  wrote. A `repeat` that isn't a number makes the button one-shot.
+* A malformed sequence is skipped and the rest still load.
 
 ### Serial
 
@@ -342,5 +365,6 @@ tests/                           pytest suite, fake serial connection
   same assumption rather than from a real Docklight export.
 * `Ctrl+W` (clear) and `Ctrl+E` (export) are shadowed while a text box has
   focus, because Textual's `Input` binds them to delete-word and end-of-line.
-* On an 80×24 terminal the log gets about four rows; it needs ~30 rows to be
-  comfortable.
+* At 80×24 the log gets about ten rows and the button panel one row of
+  buttons (it scrolls). 100×30 or larger is comfortable.
+* The quick-send box has no command history yet; a successful send clears it.

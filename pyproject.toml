@@ -4,16 +4,44 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SerialTerminal"
-version = "0.2.0"
+# Single source: serialterminal/__init__.py (also shown in the app's title bar
+# and by --version), so the two can't disagree.
+dynamic = ["version"]
 description = "Textual TUI for talking to serial devices"
 readme = "README.MD"
 requires-python = ">=3.10"  # PEP 604 unions (Path | None) are evaluated at def time
+# Floors are tested, not guessed: CI-equivalent runs pass on exactly these.
 dependencies = [
     "textual>=4.0",  # compact Button/Select/Input arrived in 4.0
     "pyserial>=3.5",
     "pyyaml>=6.0.3",
-    "textual-fspicker>=0.0.5"
+    "textual-fspicker>=0.2.0",  # FileSave(default_file=) - Ctrl+S record crashes without it
 ]
+keywords = ["serial", "uart", "rs232", "terminal", "tui", "textual", "modbus", "docklight"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Communications",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: Terminals :: Serial",
+]
+
+[project.urls]
+Homepage = "https://github.com/pegacha/SerialTerminal"
+Issues = "https://github.com/pegacha/SerialTerminal/issues"
+Changelog = "https://github.com/pegacha/SerialTerminal/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "serialterminal.__version__" }
 
 [project.optional-dependencies]
 dev = [
