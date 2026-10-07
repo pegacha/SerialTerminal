@@ -28,7 +28,7 @@ First tagged release.
 - `project.example.yml`, a working starting config (text commands, Modbus RTU
   with CRC, a repeating poll, auto-replies).
 - MIT licence.
-- Test suite (381 tests, no hardware needed) and CI on Windows and Linux,
+- Test suite (no hardware needed) and CI on Windows and Linux,
   Python 3.10-3.14, plus a clean-environment wheel install check.
 
 ### Changed
