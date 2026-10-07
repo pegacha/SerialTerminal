@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]  # PEP 639 licence metadata (license = "MIT")
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,8 @@ name = "SerialTerminal"
 dynamic = ["version"]
 description = "Textual TUI for talking to serial devices"
 readme = "README.MD"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"  # PEP 604 unions (Path | None) are evaluated at def time
 # Floors are tested, not guessed: CI-equivalent runs pass on exactly these.
 dependencies = [

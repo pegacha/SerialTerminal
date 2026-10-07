@@ -13,5 +13,8 @@ serialterminal.log*
 # Local machine state (ports, theme, last-opened path) - not shareable
 settings.yml
 
-# Working config written by the app on exit; keep your own out of git
+# Your working config holds device-specific commands and is rewritten by the
+# app on connect and exit, so it stays local. project.example.yml is the
+# shareable starting point; Ctrl+E exports a copy when you want to share one.
+project.yml
 project.backup.yml

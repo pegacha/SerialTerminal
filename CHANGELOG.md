@@ -25,6 +25,9 @@ First tagged release.
   (Windows; asked once, never in a venv), and `--add-to-path` to do it on demand.
 - `--version`; the version is also shown in the title bar.
 - Docklight `.ptp` import (`Ctrl+I`).
+- `project.example.yml`, a working starting config (text commands, Modbus RTU
+  with CRC, a repeating poll, auto-replies).
+- MIT licence.
 - Test suite (381 tests, no hardware needed) and CI on Windows and Linux,
   Python 3.10-3.14, plus a clean-environment wheel install check.
 
@@ -41,6 +44,8 @@ First tagged release.
 - Selectors name themselves: "No parity", "8 bits", "1 stop", "No checksum".
 - Footer labels shortened and reordered so filter, pause and record fit.
 - Requires `textual >= 4.0` and `textual-fspicker >= 0.2.0`.
+- `project.yml` is no longer tracked: it holds device-specific commands and is
+  rewritten by the app. Copy `project.example.yml` to start.
 
 ### Fixed
 

@@ -1,0 +1,68 @@
+# Example SerialTerminal project. Copy to project.yml (which is git-ignored, so
+# your own device commands stay private), or load it with Ctrl+I.
+
+serial:
+  port: none          # pick the port in the app; it is saved here on connect
+  baud_rate: 9600
+  parity: N           # N, E, O, M, S
+  data_bits: '8'      # quoted: these are strings
+  stop_bits: '1'
+
+quick_send:
+  format: ascii       # ascii | hex | decimal | binary
+  line_ending: crlf   # none | cr | lf | crlf (ASCII only)
+  checksum: none      # none | sum8 | xor8 | lrc8 | crc16_modbus | crc16_ccitt
+
+buttons:
+  # A text command. The line ending is added for you; don't write \r\n here.
+  - id: ping
+    label: Ping
+    message: PING
+    format: ascii
+    line_ending: crlf
+
+  - id: version
+    label: Version?
+    message: VERSION?
+    format: ascii
+    line_ending: crlf
+    tooltip: Ask the device for its firmware version
+
+  # Modbus RTU: read 10 holding registers from slave 1, address 0.
+  # The CRC is computed and appended (low byte first), so it isn't written here.
+  - id: modbus-read
+    label: Read regs 0-9
+    message: 01 03 00 00 00 0A
+    format: hex
+    checksum: crc16_modbus
+
+  # Repeats every 1000 ms until pressed again.
+  - id: modbus-poll
+    label: Poll regs (1 s)
+    message: 01 03 00 00 00 0A
+    format: hex
+    checksum: crc16_modbus
+    repeat: 1000
+
+sequences:
+  # Answer an ENQ with an ACK, 50 ms later.
+  - name: ENQ -> ACK
+    delay: 50
+    comment: ENQ received, sent ACK
+    receive:
+      data: '05'
+      format: hex
+    send:
+      data: '06'
+      format: hex
+
+  # ?? matches any one byte: reply OK to "ID" followed by any character.
+  - name: ID query
+    comment: ID query answered
+    receive:
+      data: 'ID??'
+      format: ascii
+    send:
+      data: OK
+      format: ascii
+      line_ending: crlf

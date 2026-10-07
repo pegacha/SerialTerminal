@@ -144,7 +144,15 @@ first. See Known gaps.
 Two files, with different jobs:
 
 * **`project.yml`** — the working config: serial settings, quick-send options, buttons, sequences.
-  Shareable; this is what `Ctrl+I` / `Ctrl+E` move around.
+  Git-ignored, because it holds your device's commands and the app rewrites it.
+  Start from the shipped example:
+
+  ```bash
+  cp project.example.yml project.yml
+  ```
+
+  or load `project.example.yml` with `Ctrl+I`. To share a config, export a copy
+  with `Ctrl+E`; `Ctrl+I` imports one (YAML or Docklight `.ptp`).
 * **`settings.yml`** — per-machine preferences (theme, last imported path).
   Not committed; copy `settings.example.yml` to start. Created with defaults on
   first launch if missing.
@@ -368,3 +376,9 @@ tests/                           pytest suite, fake serial connection
 * At 80×24 the log gets about ten rows and the button panel one row of
   buttons (it scrolls). 100×30 or larger is comfortable.
 * The quick-send box has no command history yet; a successful send clears it.
+
+---
+
+## License
+
+MIT - see [LICENSE](LICENSE).
