@@ -1,15 +1,20 @@
+/* Compact layout: every control is one row tall so the log gets the screen. */
+
 #title {
-    height: auto;
+    height: 1;
     width: 100%;
     content-align: center middle;
     text-style: bold;
-    hatch: right $accent 20%;
     color: $accent;
-    border: round $accent;
+    background: $panel;
 }
 
+/* ---- Serial Config ------------------------------------------------------ */
+
+/* Top padding keeps a section's title off its first row of controls. */
 #serial-bar {
-    height: 10;
+    height: auto;
+    padding: 1 1 0 1;
     border: round $primary;
     border-title-align: left;
     border-title-color: $text;
@@ -17,29 +22,55 @@
     border-title-style: bold;
 }
 
-#serial-select {
-    min-width: 20;
-    max-width: 30;
+#serial-row-top, #serial-row-bottom {
+    height: 1;
 }
 
-#baud-rate {
-    width: auto;
-    min-width: 10;
-    max-width: 30;
+#serial-row-top {
+    margin-bottom: 1;
+}
+
+#serial-bar Select {
+    margin-right: 1;
+}
+
+/* Fixed, not 1fr: stretched across the row it made a 70-column dropdown. */
+#serial-port-select {
+    width: 36;
+}
+
+/* One line per port. Wrapped, each "Standard Serial over Bluetooth link"
+   took two lines and six ports filled eleven. */
+#serial-port-select SelectOverlay {
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#serial-baud {
+    width: 12;
+}
+
+#serial-parity {
+    width: 11;
+}
+
+#serial-bits {
+    width: 7;
+}
+
+#serial-stop-bits {
+    width: 8;
 }
 
 .serial-button {
-    min-width: 11;
     width: auto;
-    height: auto;
-    margin-right:2;
-    text-overflow: ellipsis;
+    min-width: 10;
+    margin-right: 1;
 }
 
 #serial-status {
     width: auto;
     padding: 0 1;
-    content-align: left middle;
     text-style: bold;
 }
 
@@ -51,77 +82,60 @@
     color: $error;
 }
 
+/* ---- Log ---------------------------------------------------------------- */
 
-#control-buttons {
-    height: auto;
-    border: solid $primary;
-    background: $surface;
-    padding: 1;
+#log-tabs {
+    height: 1fr;
 }
 
-#buttons-container {
-    width: 100%;
-    height: auto;
-    align: left top;
+#log-filter {
+    margin-top: 1;
 }
 
-.control-button {
-    width: 12;
-    min-width: 12;
-    max-width: 12;
-    height: 3;
-    margin: 0 1 0 0;
-    text-overflow: ellipsis;
-}
-
-.control-button > .button--label {
-    width: 100%;
-    text-overflow: ellipsis;
-}
-
-.control-button:hover {
-    background: $primary-lighten-1;
-}
-
-.control-button:disabled {
-    opacity: 0.5;
-}
-
-.control-button.button-repeating {
-    background: $primary-lighten-1;
-    color: $text;
+#log-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $warning;
     text-style: bold;
 }
 
+/* ---- Send Command ------------------------------------------------------- */
 
-#no-buttons-msg {
-    padding: 2;
-    text-align: center;
-    color: $text-muted;
-}
-
-#quick-send-window{
+#quick-send-window {
+    height: auto;
+    padding: 1 1 0 1;
     border: round $primary;
     border-title-align: left;
     border-title-color: $text;
     border-title-background: $panel;
     border-title-style: bold;
-    height: 5;
+    border-subtitle-color: $error;
+    border-subtitle-align: left;
 }
+
 #quick-send-horizontal {
-    height: auto;
-    align: center middle;
+    height: 1;
 }
 
 .quick-send-button {
-    width: 5;
-    min-width: 5;
+    width: auto;
+    min-width: 8;
     margin-right: 1;
 }
 
 #send-format-select {
-    width: 15;
-    min-width: 15;
+    width: 12;
+    margin-right: 1;
+}
+
+#send-line-ending {
+    width: 11;
+    margin-right: 1;
+}
+
+#send-checksum {
+    width: 18;
     margin-right: 1;
 }
 
@@ -129,8 +143,16 @@
     width: 1fr;
 }
 
-#log-window {
-    height: 1fr;
+/* ---- Control Buttons ---------------------------------------------------- */
+
+/* Capped and scrollable: sized to its content, a big button set (e.g. a
+   Docklight import) grew until the log had no rows left. */
+#control-buttons {
+    height: auto;
+    max-height: 35%;
+    overflow-y: auto;
+    scrollbar-size-vertical: 1;
+    padding: 1 1 0 1;
     border: round $primary;
     border-title-align: left;
     border-title-color: $text;
@@ -138,22 +160,49 @@
     border-title-style: bold;
 }
 
-#button-container {
-    width: 100%;
-    min-height:5;
-    max-height:5;
-    align: center middle;
+/* The vertical gap matters: without it stacked one-row buttons read as a
+   single multi-line button, and it is unclear what a click will hit. */
+#buttons-container {
+    grid-gutter: 1 1;
+}
+
+.control-button {
+    width: 1fr;
+    background: $primary-muted;
+    text-overflow: ellipsis;
+}
+
+.control-button:hover {
+    background: $primary;
+}
+
+.control-button.button-repeating {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+/* File dialogs' bottom bar. The library splits the width 2:1 between the
+   file name and the filter after the buttons take 16 columns each, which
+   left the filter 15 wide and its label wrapping onto two rows. */
+FileSystemPickerScreen InputBar {
+    padding: 1 1 0 1;
+}
+
+FileSystemPickerScreen InputBar Input {
+    width: 1fr;
+}
+
+FileSystemPickerScreen InputBar Select {
+    width: 24;
+}
+
+FileSystemPickerScreen InputBar Button {
+    width: auto;
+    min-width: 10;
+}
+
+#no-buttons-msg {
     padding: 0 1;
-    border: round $primary;
-    border-title-align: left;
-    border-title-color: $text;
-    border-title-background: $panel;
-    border-title-style: bold;
+    color: $text-muted;
 }
-
-#button-box Button {
-
-    margin-right: 2;
-    max-width:12;
-}
-

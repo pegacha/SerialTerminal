@@ -9,7 +9,7 @@ description = "Textual TUI for talking to serial devices"
 readme = "README.MD"
 requires-python = ">=3.10"  # PEP 604 unions (Path | None) are evaluated at def time
 dependencies = [
-    "textual>=0.47.0",
+    "textual>=4.0",  # compact Button/Select/Input arrived in 4.0
     "pyserial>=3.5",
     "pyyaml>=6.0.3",
     "textual-fspicker>=0.0.5"

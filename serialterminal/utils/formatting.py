@@ -1,9 +1,9 @@
 from datetime import datetime
 
 
-def timestamp() -> str:
-    """Current time as HH:MM:SS.mmm, the stamp used by every log line."""
-    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+def timestamp(now: datetime = None) -> str:
+    """`now` (default: current time) as HH:MM:SS.mmm, the stamp on every log line."""
+    return (now or datetime.now()).strftime("%H:%M:%S.%f")[:-3]
 
 def format_log_message(message, stamp: str = None) -> str:
     """Add timestamp to a log message."""

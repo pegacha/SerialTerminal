@@ -12,7 +12,7 @@ bring-up, poll/response emulation, and replaying captured exchanges.
 ## Requirements
 
 * Python 3.10 or newer (the code uses PEP 604 `X | Y` annotations)
-* `textual >= 0.47.0`, `pyserial >= 3.5`, `pyyaml >= 6.0.3`, `textual-fspicker >= 0.0.5`
+* `textual >= 4.0`, `pyserial >= 3.5`, `pyyaml >= 6.0.3`, `textual-fspicker >= 0.0.5`
 
 ## Installing
 
@@ -30,17 +30,32 @@ serialterminal
 python -m serialterminal
 ```
 
-### Windows PATH note
+### PATH
 
-If `serialterminal` is not recognised after installing, the Python *Scripts*
-directory is not on your PATH. Find it with:
+If `serialterminal` is not recognised after installing, the folder pip put it
+in is not on your PATH. pip can't fix that itself (packages can't run code at
+install time), so the app offers on its first launch:
 
-```powershell
-python -m site --user-base
+```
+The `serialterminal` command is installed in C:\...\Python314\Scripts,
+but that folder is not on your PATH, so typing `serialterminal` won't find it.
+Add it to your user PATH now? [y/N]
 ```
 
-Add that path's `Scripts` subdirectory to PATH and restart your terminal, or
-just use `python -m serialterminal`, which needs no PATH change.
+Answering `y` adds the folder to your **user** PATH (no admin rights needed),
+keeping existing `%VAR%` entries intact. Open a new terminal afterwards. The
+question is asked once; the answer is remembered in
+`%LOCALAPPDATA%\SerialTerminal\state.yml`. It isn't asked inside a virtual
+environment, where activation manages PATH. On Linux and macOS it prints the
+`export` line for your shell profile instead of editing it.
+
+To do it any time, without the prompt:
+
+```bash
+python -m serialterminal --add-to-path
+```
+
+`python -m serialterminal` always works, PATH or not.
 
 ---
 
@@ -49,12 +64,49 @@ just use `python -m serialterminal`, which needs no PATH change.
 | Area | What it does |
 | ---- | ------------ |
 | **Serial Config** | Port, baud, parity, data bits, stop bits, connect/disconnect, rescan ports |
-| **Log** | Four tabs — ASCII, HEX, Decimal, Binary — showing the same traffic in each notation |
-| **Send Command** | One-off send with a per-send format selector |
-| **Control Buttons** | Buttons from `project.yml`, optionally repeating |
+| **Log** | Four tabs — ASCII, HEX, Decimal, Binary — showing the same traffic in each notation, with filter, pause and recording |
+| **Send Command** | One-off send: format, line ending, checksum, and live validation of what you type |
+| **Control Buttons** | Buttons from `project.yml`, optionally repeating, with their own checksum and line ending |
 
 Every frame is written to all four tabs with one shared timestamp, prefixed
 `[TX]`, `[RX]`, `[Error]` or `[Sequence]`.
+
+Controls are one row tall and meant for the mouse, so most of the screen goes
+to the log. To make everything bigger or smaller, zoom the terminal itself
+(`Ctrl` + `+`/`-` or `Ctrl` + mouse wheel in Windows Terminal); the app has
+no font size of its own.
+
+Control buttons wrap into columns sized to the longest label. The panel takes
+at most about a third of the screen and scrolls (mouse wheel or scrollbar)
+beyond that, so a big button set never squeezes out the log. Labels longer than
+about 24 characters are shortened with `…`; hover a button to see it in full.
+
+**Send Command.** The input is checked as you type against the selected
+format: a red border and a reason (`'G' is not a hex digit`) mean it would not
+send. A failed send keeps your text; only a successful one clears the box.
+The format, line ending and checksum you pick are saved in `project.yml`.
+
+**Filter** (`Ctrl+F`). Shows only log entries containing the text,
+case-insensitive. Each tab matches its own notation, so `41 42` finds a frame
+on the HEX tab and `AB` finds it on the ASCII tab. Timestamps are not searched;
+the direction tag is, so `[RX]` shows only received frames. The status line under the log
+gives the match count for the current tab. `Esc` or `Ctrl+F` again closes the
+filter and brings everything back.
+
+**Pause** (`Ctrl+B`). Freezes the view so you can scroll and read while traffic
+keeps arriving. Nothing is lost: entries are still recorded (and captured, if
+recording) and appear when you resume. The status line counts what arrived
+meanwhile. Each tab keeps its last 20,000 entries for filtering and resuming.
+
+**Record** (`Ctrl+S`). Asks for a file (default `session-YYYYMMDD-HHMMSS.log`)
+and appends every log entry to it until you press `Ctrl+S` again or quit. An
+existing file is appended to, never overwritten. Timestamps match the screen.
+Lines look like:
+
+```
+2026-10-06 16:07:23.286 TX   01 03 00 00 00 0A C5 CD  |........|
+2026-10-06 16:07:23.544 RX   50 4F 4E 47 0D 0A  |PONG..|
+```
 
 ### Keyboard shortcuts
 
@@ -66,7 +118,14 @@ Every frame is written to all four tabs with one shared timestamp, prefixed
 | `Ctrl+L` | Reload `project.yml` |
 | `Ctrl+I` | Import config (`.yml`, `.yaml`, or Docklight `.ptp`) |
 | `Ctrl+E` | Export current config to a `.yml` file |
+| `Ctrl+F` | Filter the log; `Esc` closes |
+| `Ctrl+B` | Pause / resume the log view |
+| `Ctrl+S` | Start / stop recording the session to a file |
 | `Ctrl+R` | Reload `styles.tcss` (not shown in the footer) |
+
+`Ctrl+W` and `Ctrl+E` don't work while a text box has focus, because the box
+uses them for delete-word and end-of-line. Click elsewhere or press `Tab`
+first. See Known gaps.
 
 ---
 
@@ -74,7 +133,7 @@ Every frame is written to all four tabs with one shared timestamp, prefixed
 
 Two files, with different jobs:
 
-* **`project.yml`** — the working config: serial settings, buttons, sequences.
+* **`project.yml`** — the working config: serial settings, quick-send options, buttons, sequences.
   Shareable; this is what `Ctrl+I` / `Ctrl+E` move around.
 * **`settings.yml`** — per-machine preferences (theme, last imported path).
   Not committed; copy `settings.example.yml` to start. Created with defaults on
@@ -101,17 +160,35 @@ serial:
 All five fields are restored on launch. If a saved port is gone (adapter
 unplugged) the log says so rather than connecting to something else.
 
+### Quick send
+
+Written from the Send Command bar on exit and on connect; restored on launch.
+
+```yaml
+quick_send:
+  format: hex            # ascii | hex | decimal | binary
+  line_ending: none      # none | cr | lf | crlf
+  checksum: crc16_modbus # see Checksums and line endings
+```
+
 ### Buttons
 
 ```yaml
 buttons:
   - id: ping             # required, must be unique - it becomes the widget id
     label: Ping          # button text
-    message: 'PING\r\n'
+    message: 'PING'
     format: ascii        # ascii | hex | decimal | binary
+    line_ending: crlf    # optional, default none
+    checksum: none       # optional, default none
     tooltip: Send a ping  # optional
     repeat: 1000         # optional: ms between repeats; omit or 0 for one-shot
 ```
+
+Use `line_ending` rather than writing `\r\n` into `message`. Inside single
+quotes YAML keeps backslashes literally, so `'PING\r\n'` sends a
+backslash, an `r`, a backslash and an `n`. Buttons use only their own
+`checksum` and `line_ending`, never the Send Command bar's.
 
 A button with `repeat` greater than 0 toggles: first press starts the interval
 and highlights the button, second press stops it. Repeats also stop on
@@ -133,6 +210,8 @@ sequences:
     send:
       data: '06'
       format: hex
+      checksum: none       # optional, as for buttons
+      line_ending: none    # optional, as for buttons
 ```
 
 The first matching active sequence wins; matching is a substring search, not a
@@ -154,6 +233,27 @@ metacharacters — `PRICE $1.00` matches exactly that text.
 A sequence that fails to parse is skipped on its own; the rest still load, and
 the reload message reports how many were dropped. Details go to the log file.
 
+### Checksums and line endings
+
+The frame is built as: payload, then the checksum over the payload, then the
+line ending. The checksum is appended as raw bytes. The line ending applies
+to ASCII only: hex, decimal and binary frames go out exactly as written, so a
+CRLF chosen for text never lands on a binary frame. The selector greys out to
+show this.
+
+| `checksum` | Algorithm | Bytes appended |
+| ---------- | --------- | -------------- |
+| `none` | — | none |
+| `sum8` | 8-bit sum | 1 |
+| `xor8` | XOR of all bytes | 1 |
+| `lrc8` | Two's complement of the 8-bit sum | 1 |
+| `crc16_modbus` | CRC-16/MODBUS (poly 0x8005 reflected, init 0xFFFF) | 2, low byte first |
+| `crc16_ccitt` | CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) | 2, high byte first |
+
+An unknown `checksum` or `line_ending` in `project.yml` means nothing is sent
+when the button or sequence fires. A button reports it on screen; a sequence
+reports it in `serialterminal.log`.
+
 ### Importing from Docklight
 
 `Ctrl+I` on a `.ptp` file converts Docklight send/receive definitions into
@@ -169,7 +269,8 @@ rather than import partially.
 ## Troubleshooting
 
 Diagnostics go to `serialterminal.log` (rotating, ~4 MB across 4 files) rather
-than the screen, which the TUI owns. Tail it while reproducing:
+than the screen, which the TUI owns. That file is about the app itself; to keep
+the traffic, record a session with `Ctrl+S`. Tail it while reproducing:
 
 ```bash
 tail -f serialterminal.log
@@ -201,7 +302,7 @@ python -m pytest
 
 No serial hardware needed: the suite drives a fake connection and Textual's
 headless pilot. Tests run in a temp directory, so a run never touches your own
-`project.yml`. CI runs them on 3.10-3.13, on Windows and Linux, and separately
+`project.yml`. CI runs them on 3.10-3.14, on Windows and Linux, and separately
 builds a wheel and installs it into a clean environment.
 
 `Ctrl+R` reloads `serialterminal/ui/styles.tcss` in place. For Textual's own
@@ -226,6 +327,9 @@ serialterminal/
   serial_comm/connection.py      pyserial wrapper
   serial_comm/receiver.py        RX thread with baud-derived frame gap detection
   sequence_handler.py            pattern compilation and matching
+  utils/payload.py               text -> bytes per notation; frame assembly
+  utils/checksum.py              checksum algorithms
+  utils/session_capture.py       Ctrl+S session recording
   utils/formatting.py            log line formatting per notation
   utils/docklight_interpreter.py .ptp import
 tests/                           pytest suite, fake serial connection
@@ -236,5 +340,7 @@ tests/                           pytest suite, fake serial connection
 * The Docklight importer assumes the field layout of the `.ptp` files it was
   written against, and its tests are characterization tests built from that
   same assumption rather than from a real Docklight export.
-* `buttons.yml` and `sequences.yml` are leftovers from the pre-`project.yml`
-  layout. Nothing reads them.
+* `Ctrl+W` (clear) and `Ctrl+E` (export) are shadowed while a text box has
+  focus, because Textual's `Input` binds them to delete-word and end-of-line.
+* On an 80×24 terminal the log gets about four rows; it needs ~30 rows to be
+  comfortable.

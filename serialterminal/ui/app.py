@@ -4,9 +4,11 @@ from textual.widgets import Footer, Static, Button, Select, Input
 from textual.widgets.select import InvalidSelectValueError
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
-from textual_fspicker import FileOpen, FileSave, Filters
+from textual_fspicker import Filters
+from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+import re
 import serial
 import threading
 import yaml
@@ -17,6 +19,7 @@ from serialterminal.ui.widgets.log_panel import MultiFormatLog
 from serialterminal.ui.widgets.serial_bar import SerialBar
 from serialterminal.ui.widgets.dynamic_control_buttons import DynamicControlButtons
 from serialterminal.ui.widgets.quick_send import QuickSend
+from serialterminal.ui.widgets.file_pickers import CompactFileOpen, CompactFileSave
 
 from serialterminal.sequence_handler import SequenceHandler, ReceiveSequence
 
@@ -24,8 +27,22 @@ from serialterminal.serial_comm.connection import SerialConnection
 from serialterminal.serial_comm.receiver import SerialReceiver
 
 from serialterminal.utils.docklight_interpreter import DocklightConfigInterpreter
+from serialterminal.utils.formatting import timestamp
+from serialterminal.utils.payload import build_frame
+from serialterminal.utils.session_capture import SessionCapture
 
 log = logging.getLogger("serialterminal.app")
+
+
+def import_filters() -> Filters:
+    """File filters for Ctrl+I. The first is the default, so it must cover
+    both formats: with YAML first, .ptp files were hidden until you switched."""
+    return Filters(
+        ("YAML or Docklight", lambda p: p.suffix.lower() in {".yml", ".yaml", ".ptp"}),
+        ("YAML files", lambda p: p.suffix.lower() in {".yml", ".yaml"}),
+        ("Docklight files", lambda p: p.suffix.lower() == ".ptp"),
+        ("All files", lambda p: True),
+    )
 
 
 class TUIApp(App):
@@ -37,6 +54,11 @@ class TUIApp(App):
         Binding("ctrl+l", "reload_config", "reload config", show=True),
         Binding("ctrl+i", "import_config", "import config", show=True),
         Binding("ctrl+e", "export_config", "export config", show=True),
+        # None of these three is claimed by Input, so they still work while the
+        # quick-send or filter box has focus.
+        Binding("ctrl+f", "toggle_filter", "filter", show=True),
+        Binding("ctrl+b", "toggle_pause", "pause", show=True),
+        Binding("ctrl+s", "toggle_capture", "record", show=True),
         Binding("ctrl+r", "reload_css", "reload css", show=False)
     ]
 
@@ -68,6 +90,7 @@ class TUIApp(App):
         )
         
         self.repeating_buttons = {}
+        self.capture = SessionCapture()
         self.config_file = Path("project.yml")
         self.settings_file = Path("settings.yml")
         
@@ -95,7 +118,7 @@ class TUIApp(App):
         self._apply_serial_config_to_ui()
 
     def _apply_serial_config_to_ui(self):
-        """Apply the loaded theme and serial settings onto the widgets.
+        """Apply the loaded theme, serial and quick-send settings onto the widgets.
 
         Shared by on_mount() and config reload, so reloading config never
         re-runs the whole mount lifecycle (port re-enumeration, etc.).
@@ -127,6 +150,18 @@ class TUIApp(App):
                     continue
                 self._set_select_value(widget_id, value)
 
+        # Quick-send choices are a property of the device, so they live with
+        # the project. Only keys actually present are applied.
+        quick_cfg = self.config.get('quick_send')
+        if isinstance(quick_cfg, dict):
+            for widget_id, key in (
+                ("#send-format-select", 'format'),
+                ("#send-line-ending", 'line_ending'),
+                ("#send-checksum", 'checksum'),
+            ):
+                if key in quick_cfg:
+                    self._set_select_value(widget_id, str(quick_cfg[key]))
+
     def _set_select_value(self, widget_id: str, value: str) -> bool:
         """Set a Select's value, tolerating options that no longer exist.
 
@@ -153,6 +188,7 @@ class TUIApp(App):
     def on_unmount(self):
         """Clean up on app close."""
         self._stop_all_repeating_buttons()
+        self.capture.stop()
         self.save_config()
         self.save_settings()
         tail = self.receiver.stop()
@@ -263,6 +299,15 @@ class TUIApp(App):
                 # Widgets absent (saving before mount / during teardown) or a
                 # non-numeric baud. Keep whatever is already in self.config.
                 log.debug("serial settings not read from UI: %s", e)
+
+            try:
+                self.config['quick_send'] = {
+                    'format': self.query_one("#send-format-select", Select).value,
+                    'line_ending': self.query_one("#send-line-ending", Select).value,
+                    'checksum': self.query_one("#send-checksum", Select).value,
+                }
+            except NoMatches as e:
+                log.debug("quick-send settings not read from UI: %s", e)
 
             # Deliberately not writing the theme here - see _apply_serial_config_to_ui.
             # Drop a migrated-away 'ui' section so exported configs stop carrying
@@ -441,16 +486,7 @@ class TUIApp(App):
                 import traceback
                 traceback.print_exc()
         
-        # Show file picker with both YAML and Docklight filters
-        file_open_screen = FileOpen(
-            ".",
-            filters=Filters(
-                ("YAML files", lambda p: p.suffix.lower() in {".yml", ".yaml"}),
-                ("Docklight files", lambda p: p.suffix.lower() == ".ptp"),
-                ("All files", lambda p: True),
-            ),
-        )
-        self.push_screen(file_open_screen, handle_file_open)
+        self.push_screen(CompactFileOpen(".", filters=import_filters()), handle_file_open)
 
     def action_export_config(self):
         """Export current configuration to a file using file picker."""
@@ -483,12 +519,27 @@ class TUIApp(App):
                 self.log_message(f"Error exporting: {e}", 'error')
         
         # Show file picker - FileSave just takes the starting directory
-        file_save_screen = FileSave(".")
+        file_save_screen = CompactFileSave(".")
         self.push_screen(file_save_screen, handle_file_save)
 
     # ========================================================================
     # SERIAL PORT MANAGEMENT
     # ========================================================================
+
+    @staticmethod
+    def port_label(device: str, description: str) -> str:
+        """'COM4 — USB Serial Port', not 'COM4 — USB Serial Port (COM4)'.
+
+        Windows descriptions repeat the port name; Linux ones are often 'n/a'
+        or the device itself, which adds nothing.
+        """
+        description = (description or "").strip()
+        suffix = f"({device})"
+        if description.endswith(suffix):
+            description = description[:-len(suffix)].strip()
+        if not description or description in (device, "n/a"):
+            return device
+        return f"{device} — {description}"
 
     def refresh_serial_ports(self):
         """Refresh available serial ports list."""
@@ -497,10 +548,13 @@ class TUIApp(App):
         # Start with a None option
         port_options = [("None", "none")]
 
-        for device, name, description in ports:
-            label = f"{device} — {description}"
-            value = device
-            port_options.append((label, value))
+        # Natural order (COM3, COM4, COM10), not enumeration order.
+        def natural(port):
+            return [int(part) if part.isdigit() else part.lower()
+                    for part in re.split(r"(\d+)", port[0])]
+
+        for device, name, description in sorted(ports, key=natural):
+            port_options.append((self.port_label(device, description), device))
 
         try:
             select = self.query_one("#serial-port-select", Select)
@@ -620,41 +674,42 @@ class TUIApp(App):
     # SERIAL DATA TRANSMISSION
     # ========================================================================
 
-    def _send_command(self, frame, format_override: str = None, comment: str = ''):
-        """Send a command frame over serial."""
+    def _send_command(self, frame, format_override: str = None, comment: str = '',
+                      checksum: str = 'none', line_ending: str = 'none') -> bool:
+        """Send a command frame over serial. Returns True if it was sent."""
         if not self.serial_conn.connected:
             self.log_message("Not connected to serial port", 'error')
-            return
-        
+            return False
+
+        if format_override:
+            input_format = format_override
+        else:
+            try:
+                input_format = self.query_one("#send-format-select", Select).value
+            except NoMatches:
+                input_format = "ascii"
+
         try:
-            if format_override:
-                input_format = format_override
-            else:
-                try:
-                    input_format = self.query_one("#send-format-select", Select).value
-                except NoMatches:
-                    input_format = "ascii"
-            
-            if input_format == "hex":
-                hex_str = frame.replace(" ", "").replace("0x", "")
-                frameData = bytes.fromhex(hex_str)
-            elif input_format == "decimal":
-                dec_values = frame.split()
-                frameData = bytes([int(val) for val in dec_values])
-            elif input_format == "binary":
-                bin_values = frame.replace(" ", "")
-                byte_values = [bin_values[i:i+8] for i in range(0, len(bin_values), 8)]
-                frameData = bytes([int(b, 2) for b in byte_values])
-            else:
-                frameData = frame.encode('ascii')
-            
+            frameData = build_frame(frame, input_format, checksum, line_ending)
             self.log_message(frameData, 'tx')
             self.serial_conn.write(frameData)
-            
+            return True
+
         except ValueError as e:
-            self.log_message(f"Invalid format for {input_format}: {e}", 'error')
+            self.log_message(f"Cannot send ({input_format}): {e}", 'error')
         except Exception as e:
             self.log_message(f"Error sending command: {e}", 'error')
+        return False
+
+    def _quick_send(self):
+        """Send the quick-send box with its selected options.
+
+        The text is kept unless the send succeeded, so a typo or a dropped
+        connection never costs you what you typed.
+        """
+        box = self.query_one("#quick-send-input", Input)
+        if self._send_command(box.value, **self.query_one(QuickSend).options()):
+            box.value = ""
 
     def _on_frame_received(self, frame_bytes: bytes):
         """Handle received serial data."""
@@ -715,42 +770,40 @@ class TUIApp(App):
         elif button_id == "refresh-ports":
             self.refresh_serial_ports()
         elif button_id == "send-button":
-            if self.serial_conn.connected:
-                input_widget = self.query_one("#quick-send-input", Input)
-                command = input_widget.value
-                self._send_command(command)
+            self._quick_send()
         elif hasattr(event.button, 'message') and hasattr(event.button, 'format'):
             message = event.button.message
             format_type = event.button.format
             label = event.button.label
             repeat = getattr(event.button, 'repeat', None)
-            
+            extras = {
+                'checksum': getattr(event.button, 'checksum', 'none'),
+                'line_ending': getattr(event.button, 'line_ending', 'none'),
+            }
+
             if self.serial_conn.connected:
                 # Check if this is a repeating button (repeat > 0)
                 if repeat is not None and repeat > 0:
                     # This is a repeating button
-                    self._toggle_repeat_button(event.button, message, format_type, repeat)
+                    self._toggle_repeat_button(event.button, message, format_type, repeat, **extras)
                 else:
                     # Regular one-shot button - use format override
-                    self._send_command(message, format_override=format_type, comment=label)
+                    self._send_command(message, format_override=format_type, comment=label, **extras)
             else:
                 self.log_message("Not connected to serial port", 'error')
 
     def on_input_submitted(self, event: Input.Submitted):
         """Handle quick send input submission."""
-        input_widget = self.query_one("#quick-send-input", Input)
-
-        if self.serial_conn.connected:
-            command = input_widget.value
-            self._send_command(command)
-
-        input_widget.value = ""
+        # Any Input's Enter bubbles here; only the quick-send box sends.
+        if event.input.id == "quick-send-input":
+            self._quick_send()
 
     # ========================================================================
     # REPEATING BUTTON MANAGEMENT
     # ========================================================================
     
-    def _toggle_repeat_button(self, button: Button, message: str, format_type: str, interval_ms: int):
+    def _toggle_repeat_button(self, button: Button, message: str, format_type: str, interval_ms: int,
+                              checksum: str = 'none', line_ending: str = 'none'):
         """Toggle a repeating button on/off."""
         button_id = button.id
         
@@ -765,18 +818,22 @@ class TUIApp(App):
             self.log_message(f"Stopped repeating: {button.label}")
         else:
             # Start repeating
-            self._start_repeating_button(button_id, button, message, format_type, interval_ms)
+            self._start_repeating_button(button_id, button, message, format_type, interval_ms,
+                                         checksum=checksum, line_ending=line_ending)
             button.add_class("button-repeating")
-    
-    def _start_repeating_button(self, button_id: str, button: Button, message: str, format_type: str, interval_ms: int):
+
+    def _start_repeating_button(self, button_id: str, button: Button, message: str, format_type: str,
+                                interval_ms: int, checksum: str = 'none', line_ending: str = 'none'):
         """Start repeating a command at the specified interval."""
-        self._send_command(message, format_override=format_type, comment="")
-        
+        extras = {'checksum': checksum, 'line_ending': line_ending}
+        self._send_command(message, format_override=format_type, comment="", **extras)
+
         interval_s = interval_ms / 1000.0
-        
+
         timer = self.set_interval(
             interval_s,
-            lambda: self._send_command(message, format_override=format_type, comment=f"{button.label} (repeat)"),
+            lambda: self._send_command(message, format_override=format_type,
+                                       comment=f"{button.label} (repeat)", **extras),
             name=f"repeat_{button_id}"
         )
         
@@ -807,15 +864,83 @@ class TUIApp(App):
     # ========================================================================
 
     def log_message(self, message, type: str = ''):
-        """Log a message to the multi-format log panel."""
+        """Log a message to the multi-format log panel, and to the capture if recording."""
+        # One instant for both, so the capture file and the screen agree.
+        now = datetime.now()
         try:
             panel = self.query_one(MultiFormatLog)
-            panel.log_message(message, type)
+            panel.log_message(message, type, stamp=timestamp(now))
         except Exception as e:
             # Named `panel`, not `log`: binding `log` here made it local to the
             # function, so this very line raised UnboundLocalError and the real
             # error was never reported.
             log.error("Log error: %s - Message: %r", e, message)
+
+        # getattr: log_message must stay safe on a half-built app (see tests).
+        capture = getattr(self, 'capture', None)
+        if capture is not None and capture.active:
+            try:
+                capture.write(now, type, message)
+            except OSError as e:
+                self._stop_capture(f"Recording stopped - write failed: {e}")
+
+    # ========================================================================
+    # FILTER, PAUSE & SESSION CAPTURE
+    # ========================================================================
+
+    def action_toggle_filter(self):
+        """Show the log filter box (Ctrl+F again, or Esc, closes and clears it)."""
+        panel = self.query_one(MultiFormatLog)
+        if panel.filter_open:
+            panel.action_close_filter()
+        else:
+            panel.open_filter()
+
+    def action_toggle_pause(self):
+        """Freeze the log view; traffic is still recorded and shown on resume."""
+        panel = self.query_one(MultiFormatLog)
+        panel.set_paused(not panel.paused)
+
+    def action_toggle_capture(self):
+        """Start recording the session to a file, or stop the current recording."""
+        if self.capture.active:
+            self._stop_capture()
+            return
+
+        def handle_file_save(file_path: Path | None) -> None:
+            if file_path is None:
+                self.log_message("Recording cancelled", 'info')
+                return
+            self.start_capture(file_path)
+
+        default = datetime.now().strftime("session-%Y%m%d-%H%M%S.log")
+        self.push_screen(
+            CompactFileSave(".", title="Record session to", default_file=default),
+            handle_file_save,
+        )
+
+    def start_capture(self, path) -> bool:
+        """Begin appending every log entry to `path`."""
+        try:
+            self.capture.start(path)
+        except OSError as e:
+            self.log_message(f"Cannot record to {path}: {e}", 'error')
+            return False
+        self.query_one(MultiFormatLog).set_recording(self.capture.path.name)
+        self.log_message(f"Recording session to {self.capture.path}", 'info')
+        return True
+
+    def _stop_capture(self, reason: str = None):
+        path = self.capture.path
+        self.capture.stop()
+        try:
+            self.query_one(MultiFormatLog).set_recording(None)
+        except NoMatches:
+            pass
+        if reason:
+            self.log_message(reason, 'error')
+        else:
+            self.log_message(f"Recording stopped: {path}", 'info')
 
     async def action_reload_css(self) -> None:
         """Re-read styles.tcss without restarting (Ctrl+R).

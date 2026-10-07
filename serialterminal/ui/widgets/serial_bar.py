@@ -4,7 +4,11 @@ from textual.containers import Vertical, Horizontal
 
 
 class SerialBar(Vertical):
-    """Serial port configuration bar."""
+    """Serial port configuration bar.
+
+    Compact (one-row) widgets throughout: the app is driven with the mouse,
+    and the default three-row boxes left the log a third of the screen.
+    """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -17,7 +21,8 @@ class SerialBar(Vertical):
                 options=[("None", "none")],
                 value="none",
                 id="serial-port-select",
-                allow_blank=False
+                allow_blank=False,
+                compact=True,
             )
 
             yield Select(
@@ -41,6 +46,7 @@ class SerialBar(Vertical):
                 value="9600",
                 id="serial-baud",
                 allow_blank=False,
+                compact=True,
             )
 
             yield Static("● Disconnected", id="serial-status", classes="status-disconnected")
@@ -56,7 +62,8 @@ class SerialBar(Vertical):
                 ],
                 value="N",
                 id="serial-parity",
-                allow_blank=False
+                allow_blank=False,
+                compact=True,
             )
 
             yield Select(
@@ -68,7 +75,8 @@ class SerialBar(Vertical):
                 ],
                 value="8",
                 id="serial-bits",
-                allow_blank=False
+                allow_blank=False,
+                compact=True,
             )
 
             yield Select(
@@ -79,9 +87,11 @@ class SerialBar(Vertical):
                 ],
                 value="1",
                 id="serial-stop-bits",
-                allow_blank=False
+                allow_blank=False,
+                compact=True,
             )
 
-            yield Button("Connect", id="serial-connect", classes="serial-button")
-            yield Button("Disc.", id="serial-disconnect", classes="serial-button", disabled=True)
-            yield Button("Refresh", id="refresh-ports", classes="serial-button")
+            yield Button("Connect", id="serial-connect", classes="serial-button", compact=True)
+            yield Button("Disconnect", id="serial-disconnect", classes="serial-button",
+                         disabled=True, compact=True)
+            yield Button("Refresh", id="refresh-ports", classes="serial-button", compact=True)

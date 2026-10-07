@@ -4,6 +4,8 @@ import re
 import logging
 from typing import List, Dict, Any, Optional
 
+from serialterminal.utils.payload import build_frame
+
 log = logging.getLogger("serialterminal.sequence")
 
 # Wildcard used by every receive format. A character class rather than "."
@@ -29,6 +31,8 @@ class ReceiveSequence:
         send_cfg = config.get('send', {})
         self.send_data = send_cfg.get('data', '')
         self.send_format = send_cfg.get('format', 'hex')
+        self.send_checksum = send_cfg.get('checksum', 'none')
+        self.send_line_ending = send_cfg.get('line_ending', 'none')
         
         # Compile the pattern for matching
         self.pattern = self._compile_pattern()
@@ -135,20 +139,12 @@ class ReceiveSequence:
         return self.pattern.search(data) is not None
     
     def get_response_bytes(self) -> bytes:
-        """Convert the send data to bytes based on format."""
+        """Convert the send data to bytes, with optional checksum and line ending."""
         try:
-            if self.send_format == "hex":
-                hex_str = self.send_data.replace(" ", "").replace("0x", "")
-                return bytes.fromhex(hex_str)
-            elif self.send_format == "decimal":
-                dec_values = self.send_data.split()
-                return bytes([int(val) for val in dec_values])
-            elif self.send_format == "binary":
-                bin_values = self.send_data.replace(" ", "")
-                byte_values = [bin_values[i:i+8] for i in range(0, len(bin_values), 8)]
-                return bytes([int(b, 2) for b in byte_values])
-            else:  # ascii
-                return self.send_data.encode('ascii')
+            return build_frame(
+                self.send_data, self.send_format,
+                self.send_checksum, self.send_line_ending,
+            )
         except Exception as e:
             log.error("Error converting response for sequence '%s': %s", self.name, e)
             return b""

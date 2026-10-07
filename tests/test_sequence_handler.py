@@ -157,6 +157,18 @@ class TestResponseBytes:
     def test_bad_response_returns_empty_rather_than_raising(self):
         assert seq(send={"data": "ZZ", "format": "hex"}).get_response_bytes() == b""
 
+    def test_checksum_appended_to_response(self):
+        send = {"data": "01 03 00 00 00 0A", "format": "hex", "checksum": "crc16_modbus"}
+        assert seq(send=send).get_response_bytes() == bytes.fromhex("01030000000AC5CD")
+
+    def test_line_ending_appended_to_ascii_response(self):
+        send = {"data": "OK", "format": "ascii", "line_ending": "crlf"}
+        assert seq(send=send).get_response_bytes() == b"OK\r\n"
+
+    def test_unknown_checksum_gives_empty_response_not_a_crash(self):
+        send = {"data": "06", "format": "hex", "checksum": "crc99"}
+        assert seq(send=send).get_response_bytes() == b""
+
 
 class TestSequenceHandler:
     def test_regression_one_bad_entry_keeps_the_rest(self):

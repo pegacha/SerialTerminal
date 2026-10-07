@@ -1,11 +1,15 @@
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
-from textual.containers import Container, Horizontal
+from textual.containers import Container, ItemGrid
 from pathlib import Path
 import logging
 import yaml
 
 log = logging.getLogger("serialterminal.buttons")
+
+# Beyond this a label is ellipsised (full text on hover) rather than one
+# long label widening every column: 28 fits three columns at 100 wide.
+MAX_COLUMN_WIDTH = 28
 
 
 class DynamicControlButtons(Container):
@@ -50,26 +54,37 @@ class DynamicControlButtons(Container):
     def compose(self) -> ComposeResult:
         """Compose the buttons based on YAML configuration."""
         if not self.buttons_config:
-            yield Static("No buttons configured. Edit config.yml", id="no-buttons-msg")
+            yield Static("No buttons configured. Edit project.yml (Ctrl+O)", id="no-buttons-msg")
             return
         
-        # Use a simple container with horizontal layout that will wrap
-        with Horizontal(id="buttons-container"):
+        # A Horizontal never wraps, so buttons past the right edge were cut
+        # off unseen, and fixed 12-column buttons truncated labels until
+        # e.g. "LIGHT RELAY ON" and "LIGHT RELAY OFF" looked identical. ItemGrid
+        # wraps; columns are sized to the longest label (capped) so every
+        # label shows in full.
+        longest = max(len(str(b.get('label', 'Button'))) for b in self.buttons_config)
+        with ItemGrid(id="buttons-container",
+                      min_column_width=min(longest + 4, MAX_COLUMN_WIDTH)):
             for btn_config in self.buttons_config:
                 button_id = btn_config.get('id', 'btn-unknown')
-                label = btn_config.get('label', 'Button')
+                label = str(btn_config.get('label', 'Button'))
                 tooltip = btn_config.get('tooltip', '')
-                
+                if not tooltip and len(label) + 4 > MAX_COLUMN_WIDTH:
+                    tooltip = label  # it may be ellipsised; hover shows it whole
+
                 button = Button(
                     label,
                     id=button_id,
                     classes="control-button",
-                    tooltip=tooltip if tooltip else None
+                    tooltip=tooltip if tooltip else None,
+                    compact=True,
                 )
                 # Store message and format as attributes
                 button.message = btn_config.get('message', '')
                 button.format = btn_config.get('format', 'ascii')
                 button.repeat = btn_config.get('repeat', None)  # Repeat interval in ms
+                button.checksum = btn_config.get('checksum', 'none')
+                button.line_ending = btn_config.get('line_ending', 'none')
                 
                 yield button
     
