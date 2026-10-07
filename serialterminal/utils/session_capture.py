@@ -26,7 +26,10 @@ def format_capture_line(when: datetime, type: str, message) -> str:
     if isinstance(message, (bytes, bytearray)):
         hex_str = " ".join(f"{b:02X}" for b in message)
         return f"{stamp} {label:<4} {hex_str}  |{_printable(message)}|"
-    return f"{stamp} {label:<4} {message}"
+    # One entry per line, so the file stays greppable and line-oriented tools
+    # (tail -f, sort, diff) see whole entries: escape embedded line breaks.
+    text = str(message).replace("\r", "\\r").replace("\n", "\\n")
+    return f"{stamp} {label:<4} {text}"
 
 
 class SessionCapture:
@@ -50,9 +53,15 @@ class SessionCapture:
         self.stop()
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = open(path, "a", encoding="utf-8", buffering=1)
+        handle = open(path, "a", encoding="utf-8", buffering=1)
+        try:
+            handle.write(f"# capture started {datetime.now().isoformat(timespec='seconds')}\n")
+        except OSError:
+            # Don't leave a half-open capture that claims to be recording.
+            handle.close()
+            raise
+        self._file = handle
         self.path = path
-        self._file.write(f"# capture started {datetime.now().isoformat(timespec='seconds')}\n")
 
     def write(self, when: datetime, type: str, message) -> None:
         """Record one entry. Raises OSError if the write fails."""
@@ -60,10 +69,15 @@ class SessionCapture:
             self._file.write(format_capture_line(when, type, message) + "\n")
 
     def stop(self) -> None:
-        if self._file is not None:
+        handle, self._file = self._file, None
+        if handle is None:
+            return
+        try:
+            handle.write(f"# capture stopped {datetime.now().isoformat(timespec='seconds')}\n")
+        except OSError:
+            pass  # e.g. the drive went away; still release the handle below
+        finally:
             try:
-                self._file.write(f"# capture stopped {datetime.now().isoformat(timespec='seconds')}\n")
-                self._file.close()
+                handle.close()
             except OSError:
                 pass
-        self._file = None

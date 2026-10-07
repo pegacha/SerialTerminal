@@ -45,7 +45,7 @@ def _crc16_ccitt(data: bytes) -> bytes:
 
 # key -> (label shown in the UI, function)
 CHECKSUMS = {
-    "none": ("None", lambda data: b""),
+    "none": ("No checksum", lambda data: b""),
     "sum8": ("SUM-8", _sum8),
     "xor8": ("XOR-8", _xor8),
     "lrc8": ("LRC-8", _lrc8),

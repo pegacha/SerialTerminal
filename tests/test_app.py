@@ -544,28 +544,63 @@ class TestButtonLayout:
                 assert app.screen.region.contains_region(button.region), label
                 assert button.region.width >= len(label) + 2, label
 
+    @staticmethod
+    def _many_buttons_config(count=40):
+        config = dict(MINIMAL_CONFIG)
+        config["buttons"] = [
+            {"id": f"b{i}", "label": f"Button number {i}", "message": "X", "format": "ascii"}
+            for i in range(count)
+        ]
+        return config
+
     async def test_regression_many_buttons_scroll_instead_of_eating_the_log(
         self, write_config, make_app
     ):
         """REGRESSION: the panel was sized to its content, so a big Docklight
-        import grew it until the log had no rows and later buttons were cut off."""
-        config = dict(MINIMAL_CONFIG)
-        config["buttons"] = [
-            {"id": f"b{i}", "label": f"Button number {i}", "message": "X", "format": "ascii"}
-            for i in range(40)
-        ]
-        write_config(config)
+        import grew it until the log had no rows and later buttons were cut off.
+        Wide terminals now put the buttons in a sidebar beside the log."""
+        write_config(self._many_buttons_config())
         app = make_app()
-        async with app.run_test(size=(100, 38)) as pilot:
+        async with app.run_test(size=(120, 38)) as pilot:
             await pilot.pause()
             panel = app.query_one("#control-buttons")
-            assert app.query_one("#log-tabs").region.height >= 10
-            assert panel.region.height <= 38 * 0.35 + 1
+            log_tabs = app.query_one("#log-tabs")
+            assert panel.region.x >= log_tabs.region.right, "sidebar sits right of the log"
+            # The sidebar takes columns, not rows: everything below the serial
+            # bar except Send Command and the footer belongs to the log.
+            assert log_tabs.region.height >= 24
             assert panel.max_scroll_y > 0 and panel.show_vertical_scrollbar
 
             panel.scroll_end(animate=False)
             await pilot.pause()
             assert panel.region.contains_region(app.query_one("#b39", Button).region)
+
+    async def test_narrow_terminal_stacks_buttons_under_the_log(self, write_config, make_app):
+        """Below 100 columns a sidebar would leave the log too narrow for a hex
+        frame, so the buttons go under it - still capped and scrollable."""
+        write_config(self._many_buttons_config())
+        app = make_app()
+        async with app.run_test(size=(90, 38)) as pilot:
+            await pilot.pause()
+            panel = app.query_one("#control-buttons")
+            log_tabs = app.query_one("#log-tabs")
+            assert panel.region.y >= log_tabs.region.bottom, "buttons below the log"
+            assert panel.region.width >= 80, "full width, not a sidebar"
+            assert log_tabs.region.height >= 10
+            assert panel.region.height <= 38 * 0.35 + 1
+            assert panel.max_scroll_y > 0
+
+    async def test_regression_80x24_log_is_usable(self, write_config, make_app):
+        """REGRESSION: at 80x24 the log had a single visible row."""
+        write_config(self._many_buttons_config(20))
+        app = make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            # Tab bar plus at least six rows of traffic.
+            assert app.query_one("#log-tabs").region.height >= 8
+            assert not app.query_one("#title").display, "title row given up for the log"
+            for widget in app.query("#serial-bar Select, #serial-bar Button"):
+                assert app.screen.region.contains_region(widget.region), widget.id
 
     async def test_mouse_wheel_over_a_button_scrolls_the_panel(self, write_config, make_app):
         from textual import events

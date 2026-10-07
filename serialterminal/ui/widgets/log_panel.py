@@ -30,8 +30,15 @@ class LogPanel(Log):
     """
 
     def __init__(self, **kwargs):
+        # Cap the widget's own line buffer too. Only the entry history was
+        # capped, so Log's lines grew for as long as the app ran - hours of
+        # polling meant unbounded memory and an ever slower view.
+        kwargs.setdefault("max_lines", HISTORY_LIMIT)
         self._entries = deque(maxlen=HISTORY_LIMIT)
         self._filter = ""
+        # Kept incrementally so the status line can show a live count on every
+        # entry without rescanning up to HISTORY_LIMIT entries each time.
+        self._match_count = 0
         self.paused = False
         super().__init__(**kwargs)
 
@@ -42,8 +49,13 @@ class LogPanel(Log):
         Textual's own logger, and overriding it with a method breaks any
         internal `self.log.debug(...)` call on this widget.
         """
+        if len(self._entries) == self._entries.maxlen and self._matches(self._entries[0]):
+            self._match_count -= 1  # the oldest entry is about to be evicted
         self._entries.append(message)
-        if self.paused or not self._matches(message):
+        matched = self._matches(message)
+        if matched:
+            self._match_count += 1
+        if self.paused or not matched:
             return
         self.write_line(message)
         self._scroll_to_end()
@@ -61,11 +73,12 @@ class LogPanel(Log):
     def set_filter(self, text: str):
         """Show only entries containing `text` (case-insensitive); '' shows all."""
         self._filter = text.lower()
+        self._match_count = sum(1 for entry in self._entries if self._matches(entry))
         self.redraw()
 
     @property
     def match_count(self) -> int:
-        return sum(1 for entry in self._entries if self._matches(entry))
+        return self._match_count
 
     def redraw(self):
         """Rebuild the view from the stored entries."""
@@ -76,6 +89,7 @@ class LogPanel(Log):
     def clear(self):
         """Forget every entry, not just the visible ones."""
         self._entries.clear()
+        self._match_count = 0
         return super().clear()
 
     def _scroll_to_end(self):
@@ -207,6 +221,9 @@ class MultiFormatLog(Container):
 
         if self.paused:
             self._pending += 1
+        if self.paused or self._filter_text:
+            # Live: the match count used to update only when the filter or tab
+            # changed, so it went stale while traffic kept arriving.
             self._update_status()
 
     def _add_prefix_after_timestamp(self, formatted_msg: str, prefix: str) -> str:
@@ -217,7 +234,11 @@ class MultiFormatLog(Container):
         if prefix and "] " in formatted_msg:
             parts = formatted_msg.split("] ", 1)
             if len(parts) == 2:
-                return f"{parts[0]}] {prefix}{parts[1]}"
+                first, *rest = f"{parts[0]}] {prefix}{parts[1]}".split("\n")
+                # Shift continuation lines by the prefix too, so a multi-line
+                # ASCII frame stays aligned under its own data column.
+                pad = " " * len(prefix)
+                return "\n".join([first] + [pad + line for line in rest])
         return formatted_msg
 
     def clear(self):

@@ -51,15 +51,15 @@
 }
 
 #serial-parity {
-    width: 11;
+    width: 13;
 }
 
 #serial-bits {
-    width: 7;
+    width: 11;
 }
 
 #serial-stop-bits {
-    width: 8;
+    width: 13;
 }
 
 .serial-button {
@@ -88,8 +88,18 @@
     height: 1fr;
 }
 
+/* Log defaults to overflow-x: scroll, which keeps an empty horizontal
+   scrollbar - a whole dead row - under every tab. auto still scrolls a frame
+   wider than the log, but gives the row back otherwise. */
+LogPanel {
+    overflow-x: auto;
+}
+
+/* Attached to the log it filters: a blank row above made the box look
+   like stray text once its placeholder was gone. */
 #log-filter {
-    margin-top: 1;
+    margin-top: 0;
+    background: $boost;
 }
 
 #log-status {
@@ -143,13 +153,30 @@
     width: 1fr;
 }
 
+/* ---- Workspace: log + send on the left, buttons beside them ------------- */
+
+#workspace {
+    height: 1fr;
+}
+
+#log-column {
+    width: 1fr;
+    height: 1fr;
+}
+
+#multi-format-log {
+    height: 1fr;
+}
+
 /* ---- Control Buttons ---------------------------------------------------- */
 
-/* Capped and scrollable: sized to its content, a big button set (e.g. a
-   Docklight import) grew until the log had no rows left. */
+/* A full-height sidebar, so buttons never take rows from the log. 34 columns
+   hold one column of buttons with labels up to ~25 characters; longer ones
+   are ellipsised with the full text on hover. Scrolls when there are more
+   buttons than rows. */
 #control-buttons {
-    height: auto;
-    max-height: 35%;
+    width: 34;
+    height: 1fr;
     overflow-y: auto;
     scrollbar-size-vertical: 1;
     padding: 1 1 0 1;
@@ -160,15 +187,51 @@
     border-title-style: bold;
 }
 
+/* Under 100 columns a sidebar would leave the log too narrow for a hex
+   frame, so the buttons stack under the log instead - capped and scrollable,
+   or a big button set (e.g. a Docklight import) left the log no rows. */
+.-narrow #workspace {
+    layout: vertical;
+}
+
+.-narrow #control-buttons {
+    width: 1fr;
+    height: auto;
+    max-height: 35%;
+}
+
+.-narrow.-short #control-buttons {
+    max-height: 25%;
+}
+
+/* ---- Short terminals (< 30 rows): spacing gives way to log rows --------- */
+
+.-short #title {
+    display: none;
+}
+
+.-short #serial-row-top {
+    margin-bottom: 0;
+}
+
+.-short #serial-bar,
+.-short #quick-send-window,
+.-short #control-buttons {
+    padding-top: 0;
+}
+
 /* The vertical gap matters: without it stacked one-row buttons read as a
    single multi-line button, and it is unclear what a click will hit. */
 #buttons-container {
     grid-gutter: 1 1;
 }
 
+/* nowrap is what makes the ellipsis work: without it a long label wrapped,
+   and a one-row compact button just cut it off mid-word with no "...". */
 .control-button {
     width: 1fr;
     background: $primary-muted;
+    text-wrap: nowrap;
     text-overflow: ellipsis;
 }
 

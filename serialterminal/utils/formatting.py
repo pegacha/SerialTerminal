@@ -31,26 +31,42 @@ def format_log_message_ascii(message, stamp: str = None) -> str:
             0x7F: '<DEL>'
         }
         
-        result = []
-        for byte in message:
-            if byte in ctrl_chars:
-                result.append(ctrl_chars[byte])
+        # Line terminators stay visible - whether the device sent CR, LF or
+        # CRLF is exactly what you need to see when line endings are the bug -
+        # and a new line starts after each one. A terminator that ends the
+        # frame starts nothing: it used to leave an empty line under every
+        # CRLF-terminated frame, so text protocols filled half the log with
+        # blanks. Decided per byte, not by searching the rendered text, so a
+        # device that literally sends the characters "<CR>" isn't split.
+        lines, current = [], []
+        i, n = 0, len(message)
+        while i < n:
+            byte = message[i]
+            if byte == 0x0D and i + 1 < n and message[i + 1] == 0x0A:
+                current.append('<CR><LF>')
+                lines.append(''.join(current))
+                current = []
+                i += 2
+                continue
+            if byte in (0x0A, 0x0D):
+                current.append(ctrl_chars[byte])
+                lines.append(''.join(current))
+                current = []
+            elif byte in ctrl_chars:
+                current.append(ctrl_chars[byte])
             elif 32 <= byte < 127:
-                result.append(chr(byte))
+                current.append(chr(byte))
             else:
-                result.append(f'\\x{byte:02x}')
-        
-        ascii_str = ''.join(result)
-        
-        # Handle newlines - split into multiple lines
-        if '<LF>' in ascii_str or '<CR>' in ascii_str:
-            lines = ascii_str.replace('<CR><LF>', '\n').replace('<LF>', '\n').replace('<CR>', '\n')
-            formatted_lines = [f"[{stamp}] {line}" if i == 0 else f"{'':>13} {line}" 
-                             for i, line in enumerate(lines.split('\n'))]
-            return '\n'.join(formatted_lines)
-        
-        return f"[{stamp}] {ascii_str}"
-    
+                current.append(f'\\x{byte:02x}')
+            i += 1
+        if current or not lines:
+            lines.append(''.join(current))
+
+        head = f"[{stamp}] "
+        indent = " " * len(head)  # continuation lines line up with the data
+        return "\n".join(head + line if k == 0 else indent + line
+                         for k, line in enumerate(lines))
+
     return f"[{stamp}] {message}"
 
 def format_log_message_hex(message, stamp: str = None) -> str:

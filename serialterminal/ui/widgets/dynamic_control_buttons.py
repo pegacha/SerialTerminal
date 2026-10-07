@@ -3,6 +3,7 @@ from textual.widgets import Button, Static
 from textual.containers import Container, ItemGrid
 from pathlib import Path
 import logging
+import re
 import yaml
 
 log = logging.getLogger("serialterminal.buttons")
@@ -10,6 +11,92 @@ log = logging.getLogger("serialterminal.buttons")
 # Beyond this a label is ellipsised (full text on hover) rather than one
 # long label widening every column: 28 fits three columns at 100 wide.
 MAX_COLUMN_WIDTH = 28
+
+# Ids the app's own widgets use. A control button sharing one would be routed
+# as that widget - a button with id "serial-connect" would connect the port.
+RESERVED_IDS = frozenset({
+    "buttons-container", "control-buttons", "log-filter", "log-status",
+    "log-tabs", "multi-format-log", "no-buttons-msg", "quick-send-horizontal",
+    "quick-send-input", "quick-send-window", "refresh-ports", "send-button",
+    "send-checksum", "send-format-select", "send-line-ending", "serial-bar",
+    "serial-baud", "serial-bits", "serial-connect", "serial-disconnect",
+    "serial-parity", "serial-port-select", "serial-row-bottom",
+    "serial-row-top", "serial-status", "serial-stop-bits", "tab-ascii",
+    "tab-binary", "tab-decimal", "tab-hex", "title",
+})
+
+_NOT_ID_CHAR = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _widget_id(raw, index: int) -> str:
+    """A legal Textual id derived from the configured one.
+
+    Textual ids are letters, digits, '_' and '-', not starting with a digit.
+    """
+    text = _NOT_ID_CHAR.sub("-", str(raw).strip()) if raw is not None else ""
+    if not text:
+        return f"button-{index + 1}"
+    if text[0].isdigit():
+        text = "btn-" + text
+    return text
+
+
+def normalize_buttons(raw) -> tuple[list[dict], list[str]]:
+    """Turn the configured `buttons` section into entries safe to mount.
+
+    project.yml is hand-edited (Ctrl+O), and a single bad entry used to crash
+    the app outright - at startup, or on reload mid-session. Instead every
+    problem is repaired or skipped and described, so the panel still comes up
+    and the user is told what to fix:
+
+    - a section that is not a list, or entries that are not mappings: skipped
+    - ids that are missing, illegal for Textual, duplicated or reserved by the
+      app: replaced with a legal unique id
+    - a `repeat` that isn't a number: treated as a one-shot button
+
+    The returned dicts are copies; the caller's config, which is what gets
+    saved back to project.yml, is never altered.
+
+    Returns:
+        (buttons, problems) - problems are messages fit to show the user.
+    """
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list):
+        return [], [f"'buttons' must be a list, got {type(raw).__name__} - no buttons loaded"]
+
+    buttons, problems, seen = [], [], set(RESERVED_IDS)
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            problems.append(f"Button {i + 1} is {type(entry).__name__}, not a mapping - skipped")
+            continue
+        entry = dict(entry)
+        configured = entry.get('id')
+        widget_id = _widget_id(configured, i)
+        if widget_id in seen:
+            base, n = widget_id, 2
+            while f"{base}-{n}" in seen:
+                n += 1
+            widget_id = f"{base}-{n}"
+        if configured is not None and widget_id != str(configured):
+            problems.append(f"Button {i + 1} id {configured!r} is unusable "
+                            f"(duplicate, reserved or illegal) - using {widget_id!r}")
+        seen.add(widget_id)
+        entry['id'] = widget_id
+
+        repeat = entry.get('repeat')
+        if repeat not in (None, ""):
+            try:
+                entry['repeat'] = int(float(repeat))
+            except (TypeError, ValueError):
+                problems.append(f"Button {i + 1} repeat {repeat!r} is not a number "
+                                "of milliseconds - sending once instead")
+                entry['repeat'] = 0
+        buttons.append(entry)
+
+    for message in problems:
+        log.warning(message)
+    return buttons, problems
 
 
 class DynamicControlButtons(Container):
@@ -28,28 +115,33 @@ class DynamicControlButtons(Container):
         self.border_title = "Control Buttons"
         self.config_file = Path(config_file) if config_file else None
         self.buttons_config = []
-        
+        self.problems: list[str] = []
+
         if config_data is not None:
             # Load from provided data (unified config)
-            self.buttons_config = config_data
+            self._set_buttons(config_data)
         elif self.config_file:
             # Load from file (legacy support)
             self._load_config()
-    
+
+    def _set_buttons(self, raw):
+        """Normalise `raw` (see normalize_buttons) and remember what was wrong."""
+        self.buttons_config, self.problems = normalize_buttons(raw)
+
     def _load_config(self):
         """Load button configuration from YAML file (legacy support)."""
         try:
             if self.config_file and self.config_file.exists():
                 with open(self.config_file, 'r') as f:
                     config = yaml.safe_load(f)
-                    self.buttons_config = config.get('buttons', [])
+                self._set_buttons(config.get('buttons', []) if isinstance(config, dict) else [])
                 log.debug("Loaded %d buttons from %s", len(self.buttons_config), self.config_file)
             else:
                 log.debug("Button config file not found: %s", self.config_file)
-                self.buttons_config = []
+                self._set_buttons([])
         except Exception as e:
             log.error("Error loading button config: %s", e)
-            self.buttons_config = []
+            self._set_buttons([])
     
     def compose(self) -> ComposeResult:
         """Compose the buttons based on YAML configuration."""
@@ -66,7 +158,7 @@ class DynamicControlButtons(Container):
         with ItemGrid(id="buttons-container",
                       min_column_width=min(longest + 4, MAX_COLUMN_WIDTH)):
             for btn_config in self.buttons_config:
-                button_id = btn_config.get('id', 'btn-unknown')
+                button_id = btn_config['id']  # always legal and unique after normalising
                 label = str(btn_config.get('label', 'Button'))
                 tooltip = btn_config.get('tooltip', '')
                 if not tooltip and len(label) + 4 > MAX_COLUMN_WIDTH:
@@ -97,7 +189,7 @@ class DynamicControlButtons(Container):
         """
         if config_data is not None:
             # Load from provided data
-            self.buttons_config = config_data
+            self._set_buttons(config_data)
             log.debug("Reloaded %d buttons from config data", len(self.buttons_config))
         elif self.config_file:
             # Load from file (legacy)

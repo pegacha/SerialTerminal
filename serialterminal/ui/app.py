@@ -1,6 +1,7 @@
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Static, Button, Select, Input
+from textual.containers import Horizontal, Vertical
 from textual.widgets.select import InvalidSelectValueError
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
@@ -15,6 +16,7 @@ import yaml
 import shutil
 import logging
 
+from serialterminal import __version__
 from serialterminal.ui.widgets.log_panel import MultiFormatLog
 from serialterminal.ui.widgets.serial_bar import SerialBar
 from serialterminal.ui.widgets.dynamic_control_buttons import DynamicControlButtons
@@ -34,6 +36,10 @@ from serialterminal.utils.session_capture import SessionCapture
 log = logging.getLogger("serialterminal.app")
 
 
+class _UnreadableConfig(Exception):
+    """project.yml exists but cannot be used as a config."""
+
+
 def import_filters() -> Filters:
     """File filters for Ctrl+I. The first is the default, so it must cover
     both formats: with YAML first, .ptp files were hidden until you switched."""
@@ -47,20 +53,33 @@ def import_filters() -> Filters:
 
 class TUIApp(App):
 
+    TITLE = "SerialTerminal"
+
+    # Ordered by how often they're used, with short labels: the footer shows
+    # what fits and drops the rest, and with long labels in definition order
+    # "record" never appeared below ~135 columns. Session actions come before
+    # config actions, and the descriptions (shown in full by the key panel,
+    # Ctrl+P > Keys) carry the detail.
     BINDINGS = [
         Binding("ctrl+q", "quit", "quit", show=True),
-        Binding("ctrl+w", "clearlog_message", "clear", show=True),
-        Binding("ctrl+o", "edit_config", "edit config", show=True),
-        Binding("ctrl+l", "reload_config", "reload config", show=True),
-        Binding("ctrl+i", "import_config", "import config", show=True),
-        Binding("ctrl+e", "export_config", "export config", show=True),
         # None of these three is claimed by Input, so they still work while the
         # quick-send or filter box has focus.
-        Binding("ctrl+f", "toggle_filter", "filter", show=True),
-        Binding("ctrl+b", "toggle_pause", "pause", show=True),
-        Binding("ctrl+s", "toggle_capture", "record", show=True),
+        Binding("ctrl+f", "toggle_filter", "filter", show=True, tooltip="Filter the log; Esc closes"),
+        Binding("ctrl+b", "toggle_pause", "pause", show=True, tooltip="Pause / resume the log view"),
+        Binding("ctrl+s", "toggle_capture", "record", show=True, tooltip="Record the session to a file"),
+        Binding("ctrl+w", "clearlog_message", "clear", show=True, tooltip="Clear the log"),
+        Binding("ctrl+o", "edit_config", "edit", show=True, tooltip="Edit project.yml"),
+        Binding("ctrl+l", "reload_config", "reload", show=True, tooltip="Reload project.yml"),
+        Binding("ctrl+i", "import_config", "import", show=True, tooltip="Import a config (.yml or Docklight .ptp)"),
+        Binding("ctrl+e", "export_config", "export", show=True, tooltip="Export the config to a .yml file"),
         Binding("ctrl+r", "reload_css", "reload css", show=False)
     ]
+
+    # Classes the screen gets by size, used by styles.tcss. Below 100 columns
+    # the button sidebar moves under the log; below 30 rows spacing is traded
+    # for log rows (at 80x24 the log once had a single visible line).
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (100, "-wide")]
+    VERTICAL_BREAKPOINTS = [(0, "-short"), (30, "-tall")]
 
     CSS_PATH = "styles.tcss"
 
@@ -104,18 +123,28 @@ class TUIApp(App):
         self.load_config()
 
     def compose(self) -> ComposeResult:
-        yield Static("SerialTerm", id="title")
+        yield Static(f"SerialTerminal {__version__}", id="title")
         yield SerialBar()
-        yield MultiFormatLog()
-        yield QuickSend()
-        yield DynamicControlButtons(config_data=self.config.get('buttons', []))
-        yield Footer()
+        # Log and Send Command on the left, control buttons in a sidebar on the
+        # right, so the log gets every row the serial bar doesn't use. Below
+        # 100 columns (the -narrow class) styles.tcss stacks the buttons under
+        # the log instead: a sidebar there would leave the log too narrow for
+        # a hex frame.
+        with Horizontal(id="workspace"):
+            with Vertical(id="log-column"):
+                yield MultiFormatLog()
+                yield QuickSend()
+            yield DynamicControlButtons(config_data=self.config.get('buttons', []))
+        footer = Footer()
+        footer.compact = True  # an attribute, not a constructor argument, in Textual 4.0
+        yield footer
 
     def on_mount(self):
         """Initialize UI components on mount."""
         self._app_thread_id = threading.get_ident()
         self.refresh_serial_ports()
         self._apply_serial_config_to_ui()
+        self._report_config_problems()
 
     def _apply_serial_config_to_ui(self):
         """Apply the loaded theme, serial and quick-send settings onto the widgets.
@@ -239,12 +268,29 @@ class TUIApp(App):
             log.error("Error saving settings: %s", e)
     
     def load_config(self):
-        """Load unified configuration from project.yml"""
+        """Load unified configuration from project.yml.
+
+        If the file exists but can't be used (bad YAML, or not a mapping), the
+        app starts with an empty config and refuses to save over the file:
+        otherwise one typo from a Ctrl+O edit was replaced on exit by a
+        near-empty config, deleting every button and sequence in it.
+        """
+        self.config_unreadable = None
         try:
             if self.config_file.exists():
-                with open(self.config_file, 'r') as f:
-                    self.config = yaml.safe_load(f) or {}
-                
+                try:
+                    with open(self.config_file, 'r', encoding='utf-8') as f:
+                        data = yaml.safe_load(f)
+                except yaml.YAMLError as e:
+                    first_line = str(e).strip().splitlines()[-1].strip()
+                    raise _UnreadableConfig(f"invalid YAML ({first_line})") from e
+                if data is None:
+                    data = {}
+                if not isinstance(data, dict):
+                    raise _UnreadableConfig(
+                        f"top level must be a mapping, got {type(data).__name__}")
+                self.config = data
+
                 log.debug("Loaded configuration from %s", self.config_file)
                 
                 # Initialize sequence handler if sequences exist
@@ -270,14 +316,49 @@ class TUIApp(App):
                     'sequences': []
                 }
                 self.sequence_handler = SequenceHandler(config_data=[])
-                
+
+        except _UnreadableConfig as e:
+            log.error("Cannot use %s: %s", self.config_file, e)
+            self.config_unreadable = str(e)
+            self.config = {}
+            self.sequence_handler = SequenceHandler(config_data=[])
         except Exception as e:
             log.error("Error loading config: %s", e)
+            self.config_unreadable = str(e)
             self.config = {}
             self.sequence_handler = SequenceHandler(config_data=[])
 
+    def _report_config_problems(self):
+        """Put every config problem on screen, not only in serialterminal.log.
+
+        Called after mount and after each reload, when the log panel exists.
+        """
+        if self.config_unreadable:
+            self.log_message(
+                f"{self.config_file} not loaded: {self.config_unreadable}. It will "
+                f"not be overwritten - fix it (Ctrl+O) and reload (Ctrl+L).",
+                'error'
+            )
+        try:
+            for problem in self.query_one(DynamicControlButtons).problems:
+                self.log_message(problem, 'error')
+        except NoMatches:
+            pass
+        skipped = getattr(self.sequence_handler, 'skipped', 0)
+        if skipped:
+            self.log_message(
+                f"{skipped} sequence(s) skipped as malformed - details in serialterminal.log",
+                'error'
+            )
+
     def save_config(self):
         """Save unified configuration to project.yml"""
+        if getattr(self, 'config_unreadable', None):
+            # Writing now would replace the user's file - typo and all, but
+            # otherwise intact - with the empty fallback config.
+            log.warning("Not saving %s: it could not be read (%s)",
+                        self.config_file, self.config_unreadable)
+            return
         try:
             # Update serial settings from UI if available
             try:
@@ -416,14 +497,10 @@ class TUIApp(App):
             
             self._apply_serial_config_to_ui()
 
-            button_count = len(self.config.get('buttons', []))
+            button_count = len(self.query_one(DynamicControlButtons).buttons_config)
             sequence_count = len(self.sequence_handler.get_active_sequences()) if self.sequence_handler else 0
-            skipped = getattr(self.sequence_handler, 'skipped', 0)
-            summary = f"Config reloaded: {button_count} buttons, {sequence_count} sequences"
-            if skipped:
-                self.log_message(f"{summary} ({skipped} skipped, see log)", 'error')
-            else:
-                self.log_message(summary, 'info')
+            self.log_message(f"Config reloaded: {button_count} buttons, {sequence_count} sequences", 'info')
+            self._report_config_problems()
             
         except Exception as e:
             self.log_message(f"Error reloading config: {e}", 'error')
@@ -464,8 +541,10 @@ class TUIApp(App):
                         yaml.dump(self.config, f, default_flow_style=False)
                     self.log_message(f"Backed up to {backup_file.name}", 'info')
                 
-                # Load the new config
+                # Load the new config. An import deliberately replaces
+                # project.yml, so an unreadable one no longer blocks saving.
                 self.config = new_config
+                self.config_unreadable = None
                 self.save_config()
                 
                 # Update last_used in settings
@@ -546,7 +625,7 @@ class TUIApp(App):
         ports = SerialConnection.list_ports()
 
         # Start with a None option
-        port_options = [("None", "none")]
+        port_options = [("No port", "none")]
 
         # Natural order (COM3, COM4, COM10), not enumeration order.
         def natural(port):
@@ -691,8 +770,20 @@ class TUIApp(App):
 
         try:
             frameData = build_frame(frame, input_format, checksum, line_ending)
+            if not frameData:
+                self.log_message("Nothing to send", 'error')
+                return False
+            # write() reports failure by returning 0 rather than raising (the
+            # reason goes to serialterminal.log). Check it, and log [TX] only
+            # for bytes that actually left: an unplugged adapter used to show
+            # a successful [TX] and clear the quick-send box.
+            written = self.serial_conn.write(frameData)
+            if not written:
+                self.log_message(
+                    "Send failed - the port did not accept the data "
+                    "(unplugged? see serialterminal.log)", 'error')
+                return False
             self.log_message(frameData, 'tx')
-            self.serial_conn.write(frameData)
             return True
 
         except ValueError as e:

@@ -1,7 +1,7 @@
 import argparse
 import sys
 
-from serialterminal import path_setup
+from serialterminal import __version__, path_setup
 
 
 def main(argv=None):
@@ -9,6 +9,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="serialterminal",
         description="Textual TUI for talking to serial devices.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--add-to-path",

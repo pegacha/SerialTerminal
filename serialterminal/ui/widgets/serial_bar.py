@@ -8,6 +8,9 @@ class SerialBar(Vertical):
 
     Compact (one-row) widgets throughout: the app is driven with the mouse,
     and the default three-row boxes left the log a third of the screen.
+    The line-setting options name themselves ("No parity", "8 bits"):
+    there is no room for labels, and a bare "None 8 1" row gave no hint
+    which selector was which. The stored values are unchanged.
     """
 
     def __init__(self, **kwargs):
@@ -18,7 +21,7 @@ class SerialBar(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(id="serial-row-top"):
             yield Select(
-                options=[("None", "none")],
+                options=[("No port", "none")],
                 value="none",
                 id="serial-port-select",
                 allow_blank=False,
@@ -54,7 +57,7 @@ class SerialBar(Vertical):
         with Horizontal(id="serial-row-bottom"):
             yield Select(
                 options=[
-                    ("None", "N"),
+                    ("No parity", "N"),
                     ("Even", "E"),
                     ("Odd", "O"),
                     ("Mark", "M"),
@@ -68,10 +71,10 @@ class SerialBar(Vertical):
 
             yield Select(
                 options=[
-                    ("5", "5"),
-                    ("6", "6"),
-                    ("7", "7"),
-                    ("8", "8"),
+                    ("5 bits", "5"),
+                    ("6 bits", "6"),
+                    ("7 bits", "7"),
+                    ("8 bits", "8"),
                 ],
                 value="8",
                 id="serial-bits",
@@ -81,9 +84,9 @@ class SerialBar(Vertical):
 
             yield Select(
                 options=[
-                    ("1", "1"),
-                    ("1.5", "1.5"),
-                    ("2", "2"),
+                    ("1 stop", "1"),
+                    ("1.5 stop", "1.5"),
+                    ("2 stop", "2"),
                 ],
                 value="1",
                 id="serial-stop-bits",

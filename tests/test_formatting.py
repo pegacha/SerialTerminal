@@ -84,12 +84,43 @@ class TestAscii:
         out = format_log_message_ascii(b"A\r\nB", STAMP)
         lines = out.split("\n")
         assert len(lines) == 2
-        assert lines[0] == "[" + STAMP + "] A"
+        assert lines[0] == "[" + STAMP + "] A<CR><LF>"
         assert lines[1].strip() == "B"
         assert STAMP not in lines[1], "continuation lines are indented, not restamped"
 
+    def test_continuation_lines_align_with_the_data(self):
+        lines = format_log_message_ascii(b"AB\nCD", STAMP).split("\n")
+        assert lines[1].index("CD") == lines[0].index("AB")
+
     def test_bare_lf_also_splits(self):
         assert len(format_log_message_ascii(b"A\nB", STAMP).split("\n")) == 2
+
+    def test_regression_trailing_terminator_adds_no_blank_line(self):
+        """REGRESSION: a frame ending in CRLF left an empty line under it, so a
+        text protocol filled half the log with blanks."""
+        out = format_log_message_ascii(b"PONG\r\n", STAMP)
+        assert out == "[" + STAMP + "] PONG<CR><LF>"
+
+    @pytest.mark.parametrize(
+        "frame,marker",
+        [(b"OK\r\n", "<CR><LF>"), (b"OK\n", "<LF>"), (b"OK\r", "<CR>"), (b"OK\n\r", "<LF>")],
+    )
+    def test_terminator_kind_stays_visible(self, frame, marker):
+        """Which terminator the device sent is the thing to see when line
+        endings are the bug; they used to all render as a bare line break."""
+        assert format_log_message_ascii(frame, STAMP).split("\n")[0].endswith("OK" + marker)
+
+    def test_lf_cr_is_two_terminators_not_one(self):
+        out = format_log_message_ascii(b"OK\n\r", STAMP)
+        assert out.split("\n")[1].strip() == "<CR>"
+
+    def test_literal_angle_bracket_text_is_not_a_line_break(self):
+        out = format_log_message_ascii(b"send <CR> now", STAMP)
+        assert "\n" not in out
+        assert out.endswith("send <CR> now")
+
+    def test_empty_frame_is_one_line(self):
+        assert format_log_message_ascii(b"", STAMP) == "[" + STAMP + "] "
 
 
 class TestGenericFormatter:
