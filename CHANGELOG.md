@@ -6,6 +6,8 @@ All notable changes to SerialTerminal. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-13
+
 ### Added
 
 - **Settings screen** (`F2`): theme, and a color for each kind of log line -
@@ -35,6 +37,10 @@ All notable changes to SerialTerminal. The format follows
   color, so they stand out from the panel they sit on. They were the panel's
   own color in every dialog - Settings, the button editor, the file dialogs.
 - Settings scrolls on short terminals, with Close and Reset always visible.
+- Settings sections are separated by lines with the titles in the accent color,
+  and each option's description is one short line.
+- The README is a one-page overview; the full reference moved to
+  `docs/guide.md` and the developer notes to `docs/development.md`.
 - Requires `textual >= 8.2` and `textual-fspicker >= 1.0.1`.
 
 ### Fixed
@@ -164,5 +170,6 @@ First tagged release.
 - Recording releases its file even if the final write fails.
 - Every log tab no longer reserves an empty scrollbar row.
 
+[0.3.1]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.2.0
