@@ -505,3 +505,60 @@ class TestFieldContrast:
             await pilot.press("ctrl+n")
             await pilot.pause(0.3)
             assert weakest_field(app.screen)[0] >= self.FLOOR, "button editor"
+
+
+# ----------------------------------------------------------------------------
+# Timestamp format (Settings > Timestamps)
+# ----------------------------------------------------------------------------
+
+import re  # noqa: E402
+from datetime import datetime  # noqa: E402
+
+from serialterminal.utils.formatting import timestamp  # noqa: E402
+
+
+class TestTimestampFormat:
+    NOW = datetime(2026, 10, 13, 9, 5, 7, 123456)
+
+    def test_formats(self):
+        assert timestamp(self.NOW) == "09:05:07.123"
+        assert timestamp(self.NOW, milliseconds=False) == "09:05:07"
+
+    async def test_setting_changes_new_lines_and_saves(self, write_config, make_app,
+                                                       isolated_cwd):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert app.time_format() == "milliseconds"
+            await pilot.press("f2")
+            await pilot.pause(0.2)
+            app.screen.query_one("#settings-time-format", Select).value = "seconds"
+            await pilot.pause()
+            await pilot.press("escape")
+            app.log_message(b"PING\r\nPONG", "rx")
+            await pilot.pause()
+            lines = app.query_one("#tab-ascii LogPanel").lines
+            first, second = lines[-2], lines[-1]
+            assert re.match(r"\[\d\d:\d\d:\d\d\] \[RX\] PING", first), first
+            assert second.index("PONG") == first.index("PING"), "continuation still aligned"
+            saved = yaml.safe_load((isolated_cwd / "settings.yml").read_text())
+            assert saved["time_format"] == "seconds"
+
+    async def test_default_keeps_milliseconds(self, write_config, make_app):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.log_message("note", "info")
+            await pilot.pause()
+            assert re.match(r"\[\d\d:\d\d:\d\d\.\d{3}\] ",
+                            app.query_one("#tab-ascii LogPanel").lines[-1])
+
+    async def test_unknown_value_means_milliseconds(self, write_config, make_app, isolated_cwd):
+        write_config(MINIMAL_CONFIG)
+        (isolated_cwd / "settings.yml").write_text(yaml.dump({"time_format": "nanoseconds"}))
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert app.time_format() == "milliseconds"

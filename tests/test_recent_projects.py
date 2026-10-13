@@ -203,3 +203,65 @@ class TestStripLabels:
                 label = app.query_one(f"{strip_id} .strip-vertical")
                 assert str(label.render()).split("\n") == list(name)
                 assert label.region.height >= len(name), f"{name} fits at 40 rows"
+
+
+# ----------------------------------------------------------------------------
+# A path that doesn't fit scrolls while hovered
+# ----------------------------------------------------------------------------
+
+from serialterminal.ui.widgets.recent_panel import (  # noqa: E402
+    ENTRY_WIDTH, HOLD_STEPS, RecentList, window,
+)
+
+
+class TestWindow:
+    TEXT = r"C:\Users\someone\Documents\Projects\Bench rigs\configs"
+
+    def test_fits_is_left_alone(self):
+        assert window("short", 3) == "short"
+
+    def test_at_rest_shows_the_tail(self):
+        assert window(self.TEXT, None) == "…" + self.TEXT[-(ENTRY_WIDTH - 1):]
+
+    def test_scroll_holds_slides_holds_repeats(self):
+        overflow = len(self.TEXT) - ENTRY_WIDTH
+        frames = [window(self.TEXT, step) for step in range(overflow + 2 * HOLD_STEPS + 1)]
+        assert all(len(frame) == ENTRY_WIDTH for frame in frames)
+        assert frames[0] == frames[HOLD_STEPS] == self.TEXT[:ENTRY_WIDTH], "rests at the start"
+        assert frames[HOLD_STEPS + overflow] == self.TEXT[-ENTRY_WIDTH:], "reaches the end"
+        assert frames[-2] == self.TEXT[-ENTRY_WIDTH:], "rests at the end"
+        assert frames[-1] == frames[0], "then starts over"
+
+
+class TestHoverScroll:
+    async def test_hovered_long_path_scrolls_and_resets(self, write_config, make_app,
+                                                        isolated_cwd):
+        write_config(MINIMAL_CONFIG)
+        deep = isolated_cwd / "a fairly long folder name" / "and another one here"
+        deep.mkdir(parents=True)
+        path = project(deep, "bench.yml")
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.places.add_recent(path, "config")
+            await pilot.press("f3")
+            await pilot.pause()
+            options = app.query_one("#recent-list", RecentList)
+            at_rest = str(options.get_option_at_index(0).prompt)
+            await pilot.hover("#recent-list", offset=(2, 1))
+            await pilot.pause(0.12 * (HOLD_STEPS + 6))
+            assert options.scrolling == 0
+            scrolled = str(options.get_option_at_index(0).prompt)
+            assert scrolled != at_rest, "the folder line moved"
+            await pilot.hover("#recent-title")
+            await pilot.pause()
+            assert options.scrolling is None
+            assert str(options.get_option_at_index(0).prompt) == at_rest
+
+    async def test_short_paths_do_not_scroll(self, write_config, make_app, isolated_cwd):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            options = app.query_one("#recent-list", RecentList)
+            options.paths = [r"C:\x\bench.yml"]
+            options._scroll(0)
+            assert options.scrolling is None

@@ -16,9 +16,15 @@ CONTROL_NAMES = {
 }
 
 
-def timestamp(now: datetime = None) -> str:
-    """`now` (default: current time) as HH:MM:SS.mmm, the stamp on every log line."""
-    return (now or datetime.now()).strftime("%H:%M:%S.%f")[:-3]
+# Settings (F2) > Timestamps: settings.yml value -> example shown.
+TIME_FORMATS = {"milliseconds": "12:34:56.789", "seconds": "12:34:56"}
+
+
+def timestamp(now: datetime = None, milliseconds: bool = True) -> str:
+    """`now` (default: current time) as HH:MM:SS.mmm - or HH:MM:SS - the stamp
+    on every log line."""
+    stamp = (now or datetime.now()).strftime("%H:%M:%S.%f")
+    return stamp[:-3] if milliseconds else stamp[:8]
 
 def format_log_message(message, stamp: str = None) -> str:
     """Add timestamp to a log message."""

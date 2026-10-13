@@ -18,7 +18,7 @@ isn't enough. Runs on Windows, macOS and Linux.
 * **Docklight import** - `.ptp` projects become buttons and sequences.
 * **Send Command** with live validation and shell-style history (Up / Down).
 * **Auto-connect** on send; port loss is detected and reported.
-* **Settings** (`F2`) - theme, log colors, frame gap, verbose errors.
+* **Settings** (`F2`) - theme, timestamps, log colors, frame gap, verbose errors.
 
 ![The button editor](docs/screenshots/button-editor.svg)
 

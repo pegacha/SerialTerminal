@@ -21,6 +21,11 @@ All notable changes to SerialTerminal. The format follows
   to open it, as `Ctrl+T` would. Terminals deliver a drop as a pasted path;
   any other paste is unchanged.
 
+- **Timestamps** setting: log lines stamped `12:34:56.789` (default) or
+  `12:34:56`. Recordings keep milliseconds.
+- In Recent projects, hovering an entry whose name or folder is cut off
+  scrolls it into view.
+
 ### Changed
 
 - Opening the port list rescans the ports, so an adapter plugged in after

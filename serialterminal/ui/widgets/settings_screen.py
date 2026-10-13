@@ -19,6 +19,7 @@ from serialterminal.ui.widgets.dynamic_control_buttons import (
     REPEAT_SYMBOL, REPEAT_TEXT, repeat_marker,
 )
 from serialterminal.ui.widgets.log_panel import DEFAULT_LOG_COLORS, KINDS, resolve_color
+from serialterminal.utils.formatting import TIME_FORMATS
 
 # Theme roles first: they stay readable in light and dark themes and follow a
 # theme change. The fixed colours are tuned for dark backgrounds.
@@ -110,6 +111,13 @@ class SettingsScreen(ModalScreen):
                         yield Select([(name, name) for name in sorted(app.available_themes)],
                                      value=app.theme, allow_blank=False, compact=True,
                                      id="settings-theme")
+                    with Horizontal(classes="settings-row"):
+                        yield Label("Timestamps", classes="settings-label")
+                        yield Select([(example, key) for key, example in TIME_FORMATS.items()],
+                                     value=app.time_format(), allow_blank=False,
+                                     compact=True, id="settings-time-format")
+                    yield Static("For new lines. Recordings keep milliseconds.",
+                                 classes="settings-note")
 
                 with section("Log colors"):
                     for kind in KINDS:
@@ -190,7 +198,11 @@ class SettingsScreen(ModalScreen):
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         select_id = event.select.id or ""
-        if select_id == "settings-repeat-marker":
+        if select_id == "settings-time-format":
+            event.stop()
+            if isinstance(event.value, str) and event.value != self.app.time_format():
+                self.app.set_time_format(event.value)
+        elif select_id == "settings-repeat-marker":
             event.stop()
             if isinstance(event.value, str) and event.value != self.app.repeat_marker_choice():
                 await self.app.set_repeat_marker(event.value)

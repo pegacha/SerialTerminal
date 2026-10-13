@@ -8,6 +8,8 @@ config:
 # Serial-port errors: false = one short line, true = also the system message
 # and a hint. Settings (F2) changes this.
 verbose_errors: false
+# Log timestamps: milliseconds (12:34:56.789) or seconds (12:34:56).
+time_format: milliseconds
 # Marker on buttons that repeat on a timer: auto, symbol (↻) or text ([R]).
 # Auto picks [R] in terminals that can't draw ↻. Settings (F2) changes this.
 repeat_marker: auto

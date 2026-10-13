@@ -30,7 +30,8 @@ no font size of its own.
 
 **Side panels.** **Recent projects** (`F3`) sits on the left, collapsed at
 start: it lists the project files you imported or exported, newest first, and
-clicking one imports it as `Ctrl+T` would (the current one is backed up to
+hovering one whose path is cut off scrolls it into view, and clicking one
+imports it as `Ctrl+T` would (the current one is backed up to
 `project.backup.yml`). The control buttons (`F4`, or the » in their toolbar)
 are shown at start and can be hidden; repeats keep running while hidden. A
 collapsed panel leaves a thin strip with its name written downwards - click
@@ -123,7 +124,8 @@ meanwhile. Each tab keeps its last 20,000 entries for filtering and resuming.
 
 **Record** (`Ctrl+S`). Asks for a file (default `session-YYYYMMDD-HHMMSS.log`)
 and appends every log entry to it until you press `Ctrl+S` again or quit. An
-existing file is appended to, never overwritten. Timestamps match the screen.
+existing file is appended to, never overwritten. Timestamps are the same
+instant as on screen, always with milliseconds.
 Lines look like:
 
 ```
@@ -155,7 +157,7 @@ Both lists live in `settings.yml`.
 | `Ctrl+F` | Filter the log; `Esc` closes |
 | `Ctrl+B` | Pause / resume the log view |
 | `Ctrl+S` | Start / stop recording the session to a file |
-| `F2` | Settings: theme, log colors, frame gap, repeat marker, verbose errors |
+| `F2` | Settings: theme, timestamps, log colors, frame gap, repeat marker, verbose errors |
 | `F3` | Show / hide recent projects |
 | `F4` | Show / hide the control buttons |
 | `Ctrl+R` | Reload `styles.tcss` (not shown in the footer) |

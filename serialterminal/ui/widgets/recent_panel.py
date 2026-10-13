@@ -23,16 +23,89 @@ KIND = "config"  # Places' kind for project files
 # Columns for an entry in the expanded panel (32 wide, less border and padding).
 ENTRY_WIDTH = 27
 
+# Hovering an entry that doesn't fit scrolls it: HOLD_STEPS at the start,
+# one column per step to the end, HOLD_STEPS there, then over again.
+SCROLL_STEP_SECONDS = 0.12
+HOLD_STEPS = 8
+
 
 def tail(text: str, width: int = ENTRY_WIDTH) -> str:
     """`text` cut from the left to fit: the end of a path says the most."""
     return text if len(text) <= width else "…" + text[-(width - 1):]
 
 
-def entry(path: str) -> Content:
+def window(text: str, step: int | None, width: int = ENTRY_WIDTH) -> str:
+    """What fits of `text`: its tail at rest (step None), else the part shown
+    `step` steps into a scroll."""
+    overflow = len(text) - width
+    if overflow <= 0:
+        return text
+    if step is None:
+        return tail(text, width)
+    position = step % (overflow + 2 * HOLD_STEPS)
+    offset = min(max(position - HOLD_STEPS, 0), overflow)
+    return text[offset:offset + width]
+
+
+def entry(path: str, step: int | None = None) -> Content:
     """The file name, with its folder dimmed on one line below."""
     p = Path(path)
-    return Content.assemble(tail(p.name), "\n", (tail(str(p.parent)), "dim"))
+    return Content.assemble(window(p.name, step), "\n", (window(str(p.parent), step), "dim"))
+
+
+def overflows(path: str) -> bool:
+    p = Path(path)
+    return max(len(p.name), len(str(p.parent))) > ENTRY_WIDTH
+
+
+class RecentList(OptionList):
+    """The entries; the one under the mouse scrolls if it doesn't fit."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.paths: list[str] = []
+        self.scrolling: int | None = None  # index of the entry scrolling
+        self.step = 0
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(SCROLL_STEP_SECONDS, self._advance, pause=True)
+
+    def set_paths(self, paths: list[str]) -> None:
+        self._scroll(None)
+        self.paths = paths
+        self.clear_options()
+        self.add_options([Option(entry(path), id=path) for path in paths])
+
+    def on_mouse_move(self, event) -> None:
+        # The entry under the mouse, read as OptionList itself reads it. Not
+        # its _mouse_hovering_over: that is set by a handler that runs after
+        # this one, so the first move onto an entry was missed.
+        self._scroll(event.style.meta.get("option"))
+
+    def on_leave(self, _event) -> None:
+        self._scroll(None)
+
+    def _scroll(self, index: int | None) -> None:
+        if index is not None and not (0 <= index < len(self.paths)
+                                      and overflows(self.paths[index])):
+            index = None  # fits already: nothing to scroll
+        if index == self.scrolling:
+            return
+        if self.scrolling is not None and self.scrolling < len(self.paths):
+            self.replace_option_prompt_at_index(self.scrolling, entry(self.paths[self.scrolling]))
+        self.scrolling, self.step = index, 0
+        if index is None:
+            self._timer.pause()
+        else:
+            self.replace_option_prompt_at_index(index, entry(self.paths[index], 0))
+            self._timer.resume()
+
+    def _advance(self) -> None:
+        if self.scrolling is None:
+            return
+        self.step += 1
+        self.replace_option_prompt_at_index(self.scrolling,
+                                            entry(self.paths[self.scrolling], self.step))
 
 
 class RecentFiles(Vertical):
@@ -56,7 +129,7 @@ class RecentFiles(Vertical):
                 yield Label("Recent projects", id="recent-title")
                 yield Button("«", id="recent-toggle", compact=True,
                              tooltip="Hide recent projects (F3)")
-            yield OptionList(id="recent-list", compact=True)
+            yield RecentList(id="recent-list", compact=True)
             yield Static("None yet - import or export a project (Ctrl+T, Ctrl+E)",
                          id="recent-empty")
 
@@ -75,9 +148,8 @@ class RecentFiles(Vertical):
     def refresh_list(self) -> None:
         """Re-read the recent files; files that no longer exist are left out."""
         paths = self.places.recent(KIND)
-        options = self.query_one("#recent-list", OptionList)
-        options.clear_options()
-        options.add_options([Option(entry(path), id=path) for path in paths])
+        options = self.query_one("#recent-list", RecentList)
+        options.set_paths(paths)
         options.display = bool(paths)
         self.query_one("#recent-empty").display = not paths
 

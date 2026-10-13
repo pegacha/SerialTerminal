@@ -41,7 +41,7 @@ from serialterminal.serial_comm.connection import SerialConnection
 from serialterminal.serial_comm.receiver import SerialReceiver
 
 from serialterminal.utils.docklight_interpreter import DocklightConfigInterpreter
-from serialterminal.utils.formatting import timestamp
+from serialterminal.utils.formatting import TIME_FORMATS, timestamp
 from serialterminal.utils.payload import build_frame
 from serialterminal.utils.session_capture import SessionCapture
 from serialterminal.utils.places import Places
@@ -1237,7 +1237,8 @@ class TUIApp(App):
         now = datetime.now()
         try:
             panel = self.query_one(MultiFormatLog)
-            panel.log_message(message, type, stamp=timestamp(now))
+            panel.log_message(message, type, stamp=timestamp(
+                now, milliseconds=self.time_format() == "milliseconds"))
         except Exception as e:
             # Named `panel`, not `log`: binding `log` here made it local to the
             # function, so this very line raised UnboundLocalError and the real
@@ -1541,6 +1542,16 @@ class TUIApp(App):
 
     def set_theme(self, theme: str):
         self.theme = theme  # recolours the log via theme_changed_signal
+        self._save_settings_or_warn()
+
+    def time_format(self) -> str:
+        """settings.yml's time_format: milliseconds (default) or seconds."""
+        choice = self.settings.get('time_format')
+        return choice if choice in TIME_FORMATS else 'milliseconds'
+
+    def set_time_format(self, choice: str):
+        """New log lines use it; lines already shown keep theirs."""
+        self.settings['time_format'] = choice
         self._save_settings_or_warn()
 
     def repeat_marker_choice(self) -> str:
