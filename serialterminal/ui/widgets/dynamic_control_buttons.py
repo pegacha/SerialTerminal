@@ -22,6 +22,9 @@ MAX_COLUMN_WIDTH = 28
 # as that widget - a button with id "serial-connect" would connect the port.
 RESERVED_IDS = frozenset({
     "buttons-container", "buttons-toolbar", "new-button", "edit-buttons",
+    "hide-buttons", "buttons-strip", "main-row", "workspace", "log-column",
+    "recent-files", "recent-strip", "recent-body", "recent-header", "recent-title",
+    "recent-toggle", "recent-list", "recent-empty",
     "control-buttons", "log-filter", "log-status",
     "log-tabs", "multi-format-log", "no-buttons-msg", "quick-send-horizontal",
     "quick-send-input", "quick-send-window", "refresh-ports", "send-button",
@@ -206,6 +209,9 @@ class DynamicControlButtons(Container):
             super().__init__()
             self.index = index
 
+    class HideRequested(Message):
+        """The panel's » button: collapse the panel to its strip."""
+
     def __init__(self, config_file: str = None, config_data: list = None,
                  repeat_marker: str = REPEAT_SYMBOL, **kwargs):
         """
@@ -268,6 +274,9 @@ class DynamicControlButtons(Container):
         elif event.button.id == "edit-buttons":
             event.stop()
             self.set_editing(not self.editing)
+        elif event.button.id == "hide-buttons":
+            event.stop()
+            self.post_message(self.HideRequested())
         elif self.editing and isinstance(event.button, ControlButton):
             event.stop()  # edit, don't send
             self.post_message(self.EditRequested(event.button.source_index))
@@ -296,6 +305,9 @@ class DynamicControlButtons(Container):
                          classes="toolbar-button", compact=True,
                          tooltip="Edit mode: click a button to edit it instead of "
                                  "sending it. Right-clicking a button also edits it.")
+            yield Static(classes="toolbar-spacer")
+            yield Button("»", id="hide-buttons", classes="toolbar-button", compact=True,
+                         tooltip="Hide the buttons (F4)")
 
         if not self.buttons_config:
             yield Static("No buttons yet - press + New (Ctrl+N) or import a config (Ctrl+T)",

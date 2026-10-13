@@ -11,6 +11,12 @@ All notable changes to SerialTerminal. The format follows
 - **Command history** in Send Command: Up and Down recall earlier commands,
   with their format, like a shell. The last 100 are kept in `settings.yml`.
 
+- **Recent projects** sidebar on the left (`F3`): the project files imported
+  or exported lately; click one to import it. Collapsed at start.
+- The control buttons panel can be hidden (`F4`, or its » button); it is
+  shown at start. A collapsed panel leaves a strip with its name written
+  downwards; click it to bring the panel back.
+
 ### Changed
 
 - Opening the port list rescans the ports, so an adapter plugged in after

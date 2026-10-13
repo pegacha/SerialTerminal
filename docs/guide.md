@@ -28,6 +28,14 @@ to the log. To make everything bigger or smaller, zoom the terminal itself
 (`Ctrl` + `+`/`-` or `Ctrl` + mouse wheel in Windows Terminal); the app has
 no font size of its own.
 
+**Side panels.** **Recent projects** (`F3`) sits on the left, collapsed at
+start: it lists the project files you imported or exported, newest first, and
+clicking one imports it as `Ctrl+T` would (the current one is backed up to
+`project.backup.yml`). The control buttons (`F4`, or the » in their toolbar)
+are shown at start and can be hidden; repeats keep running while hidden. A
+collapsed panel leaves a thin strip with its name written downwards - click
+it to open the panel again.
+
 **Layout.** At 100 columns or more, control buttons sit in a sidebar to the
 right of the log, so they never take rows from it. Narrower than that, a
 sidebar would leave the log too thin for a hex frame, so the buttons move under
@@ -142,6 +150,8 @@ Both lists live in `settings.yml`.
 | `Ctrl+B` | Pause / resume the log view |
 | `Ctrl+S` | Start / stop recording the session to a file |
 | `F2` | Settings: theme, log colors, frame gap, repeat marker, verbose errors |
+| `F3` | Show / hide recent projects |
+| `F4` | Show / hide the control buttons |
 | `Ctrl+R` | Reload `styles.tcss` (not shown in the footer) |
 
 `Ctrl+W` and `Ctrl+E` don't work while a text box has focus, because the box

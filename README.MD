@@ -56,6 +56,8 @@ on Linux, join the `dialout` group to open ports (see
 | `Ctrl+T` / `Ctrl+E` | Import / export a config (`.yml`, Docklight `.ptp`) |
 | `Ctrl+O` / `Ctrl+L` | Edit / reload `project.yml` |
 | `F2` | Settings |
+| `F3` | Show / hide recent projects (left; hidden at start) |
+| `F4` | Show / hide the control buttons (right) |
 | `Ctrl+Q` | Quit |
 
 ## Files

@@ -155,8 +155,120 @@ LogPanel {
 
 /* ---- Workspace: log + send on the left, buttons beside them ------------- */
 
-#workspace {
+#main-row {
     height: 1fr;
+}
+
+#workspace {
+    width: 1fr;
+    height: 1fr;
+}
+
+/* ---- Collapsible side panels ---------------------------------------------
+   Recent projects (left, F3, collapsed by default) and the control buttons
+   (right, F4, open by default). Collapsed, a panel leaves a strip with its
+   name written downwards - or across one row where the buttons sit under
+   the log in a narrow window. */
+.side-strip {
+    width: 3;
+    height: 1fr;
+    border: round $primary 60%;
+    background: transparent;
+    pointer: pointer;
+}
+
+.side-strip:hover {
+    border: round $primary;
+    background: $boost;
+}
+
+.strip-arrow {
+    width: 1fr;
+    color: $text-accent;
+    text-style: bold;
+}
+
+.strip-vertical {
+    width: 1fr;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.strip-horizontal {
+    display: none;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.-narrow #buttons-strip {
+    width: 1fr;
+    height: 3;
+}
+
+.-narrow #buttons-strip .strip-arrow,
+.-narrow #buttons-strip .strip-vertical {
+    display: none;
+}
+
+.-narrow #buttons-strip .strip-horizontal {
+    display: block;
+}
+
+#buttons-strip {
+    display: none;
+}
+
+#hide-buttons {
+    width: 3;
+    min-width: 3;
+    margin-right: 0;
+}
+
+#recent-files {
+    width: auto;
+    height: 1fr;
+}
+
+#recent-body {
+    display: none;
+    width: 32;
+    height: 1fr;
+    padding: 0 1;
+    border: round $primary;
+}
+
+#recent-files.-expanded #recent-strip {
+    display: none;
+}
+
+#recent-files.-expanded #recent-body {
+    display: block;
+}
+
+#recent-header {
+    height: 1;
+}
+
+#recent-title {
+    width: 1fr;
+    text-style: bold;
+}
+
+#recent-toggle {
+    width: 3;
+    min-width: 3;
+}
+
+#recent-list {
+    height: auto;
+    max-height: 1fr;
+    margin-top: 1;
+    background: transparent;
+}
+
+#recent-empty {
+    margin-top: 1;
+    color: $text-muted;
 }
 
 #log-column {
@@ -275,6 +387,10 @@ FileSystemPickerScreen InputBar Button {
 #buttons-toolbar {
     height: 1;
     margin-bottom: 1;
+}
+
+.toolbar-spacer {
+    width: 1fr;
 }
 
 .toolbar-button {

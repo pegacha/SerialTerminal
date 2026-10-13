@@ -4,6 +4,7 @@ from textual.message import Message
 from textual.widgets import Footer, Static, Button, Select, Input
 from textual.containers import Horizontal, Vertical
 from textual.widgets.select import InvalidSelectValueError
+from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual_fspicker import Filters
@@ -27,6 +28,8 @@ from serialterminal.ui.widgets.dynamic_control_buttons import (
 )
 from serialterminal.ui.widgets.button_editor import ButtonEditor
 from serialterminal.ui.widgets.quick_send import QuickSend, clean_history
+from serialterminal.ui.widgets.recent_panel import RecentFiles
+from serialterminal.ui.widgets.side_strip import SideStrip
 from serialterminal.ui.widgets.file_pickers import CompactFileOpen, CompactFileSave
 
 from serialterminal.sequence_handler import (
@@ -120,6 +123,8 @@ class TUIApp(App):
         Binding("ctrl+s", "toggle_capture", "record", show=True, tooltip="Record the session to a file"),
         Binding("ctrl+w", "clearlog_message", "clear", show=True, tooltip="Clear the log"),
         Binding("f2", "settings", "settings", show=True, tooltip="Theme and log colors"),
+        Binding("f3", "toggle_recent", "recent", show=True, tooltip="Show / hide recent projects"),
+        Binding("f4", "toggle_buttons", "buttons", show=True, tooltip="Show / hide the control buttons"),
         Binding("ctrl+o", "edit_config", "edit", show=True, tooltip="Edit project.yml"),
         Binding("ctrl+l", "reload_config", "reload", show=True, tooltip="Reload project.yml"),
         # Not Ctrl+I alone: terminals send Ctrl+I and Tab as the same byte
@@ -175,7 +180,7 @@ class TUIApp(App):
         self.settings = {}
         self.load_settings()
         # Recent files and favourites for the file dialogs, kept in settings.yml.
-        self.places = Places(self.settings, self._save_settings_or_warn)
+        self.places = Places(self.settings, self._places_changed)
         
         # Load working config (serial, buttons, sequences)
         self.config = {}
@@ -190,14 +195,22 @@ class TUIApp(App):
         # 100 columns (the -narrow class) styles.tcss stacks the buttons under
         # the log instead: a sidebar there would leave the log too narrow for
         # a hex frame.
-        with Horizontal(id="workspace"):
-            with Vertical(id="log-column"):
-                yield MultiFormatLog()
-                # Sent commands, for Up/Down in the box; kept in settings.yml.
-                self.settings['send_history'] = clean_history(self.settings.get('send_history'))
-                yield QuickSend(history=self.settings['send_history'])
-            yield DynamicControlButtons(config_data=self.config.get('buttons', []),
-                                        repeat_marker=self.repeat_marker())
+        # Recent files sit outside the workspace, so they stay on the left
+        # when a narrow window stacks the workspace vertically.
+        with Horizontal(id="main-row"):
+            yield RecentFiles(self.places)
+            with Horizontal(id="workspace"):
+                with Vertical(id="log-column"):
+                    yield MultiFormatLog()
+                    # Sent commands, for Up/Down in the box; kept in settings.yml.
+                    self.settings['send_history'] = clean_history(
+                        self.settings.get('send_history'))
+                    yield QuickSend(history=self.settings['send_history'])
+                yield DynamicControlButtons(config_data=self.config.get('buttons', []),
+                                            repeat_marker=self.repeat_marker())
+                # Open by default; hidden, the panel leaves this strip.
+                yield SideStrip("Control buttons", "«", id="buttons-strip",
+                                tooltip="Show the control buttons (F4)")
         footer = Footer()
         footer.compact = True  # an attribute, not a constructor argument, in Textual 4.0
         yield footer
@@ -541,6 +554,13 @@ class TUIApp(App):
 
     def action_edit_config(self):
         """Open project.yml in the platform's text editor."""
+        if not self.config_file.exists():
+            self.save_config()
+        if self._open_in_editor(self.config_file):
+            self.action_reload_config()
+
+    def _open_in_editor(self, path: Path) -> bool:
+        """Open `path` in the text editor and wait for it to close. True if it ran."""
         import subprocess
         import os
         import sys
@@ -554,13 +574,9 @@ class TUIApp(App):
                 editor = shutil.which('nano') or shutil.which('vi') or 'vi'
 
         try:
-            if not self.config_file.exists():
-                self.save_config()
-
             with self.suspend():
-                subprocess.run([editor, str(self.config_file)])
-
-            self.action_reload_config()
+                subprocess.run([editor, str(path)])
+            return True
 
         except FileNotFoundError:
             self.log_message(
@@ -568,7 +584,8 @@ class TUIApp(App):
                 'error'
             )
         except Exception as e:
-            self.log_message(f"Error opening config: {e}", 'error')
+            self.log_message(f"Error opening {path.name}: {e}", 'error')
+        return False
             
     def action_reload_config(self):
         """Reload the unified configuration."""
@@ -602,66 +619,71 @@ class TUIApp(App):
             if file_path is None:
                 self.log_message("Import cancelled", 'info')
                 return
-            
-            try:
-                # Check file extension to determine format
-                if file_path.suffix.lower() == '.ptp':
-                    # Docklight format
-                    interpreter = DocklightConfigInterpreter()
-                    new_config = interpreter.parse_file(file_path)
-                    self.log_message(f"Imported Docklight config", 'info')
-                elif file_path.suffix.lower() in {'.yml', '.yaml'}:
-                    # YAML format
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        new_config = yaml.safe_load(f)
-                else:
-                    self.log_message(f"Unsupported file type: {file_path.suffix}", 'error')
-                    return
-                
-                # Validate config
-                is_valid, error_msg = self.validate_config(new_config)
-                
-                if not is_valid:
-                    self.log_message(f"Invalid config: {error_msg}", 'error')
-                    return
-                
-                # Backup current config
-                if self.config:
-                    backup_file = Path("project.backup.yml")
-                    with open(backup_file, 'w', encoding='utf-8') as f:
-                        yaml.dump(self.config, f, default_flow_style=False)
-                    self.log_message(f"Backed up to {backup_file.name}", 'info')
-                
-                # Load the new config. An import deliberately replaces
-                # project.yml, so an unreadable one no longer blocks saving.
-                self.config = new_config
-                self.config_unreadable = None
-                self.save_config()
-                
-                # Update last_used in settings
-                if 'config' not in self.settings:
-                    self.settings['config'] = {}
-                self.settings['config']['last_used'] = str(file_path)
-                self.save_settings()
-                
-                # Reload everything
-                self.action_reload_config()
-                
-                self.log_message(f"Config imported from: {file_path.name}", 'info')
-                self.places.add_recent(file_path, "config")
-                
-            except yaml.YAMLError as e:
-                self.log_message(f"Invalid YAML: {e}", 'error')
-            except Exception as e:
-                self.log_message(f"Error importing: {e}", 'error')
-                import traceback
-                traceback.print_exc()
-        
+            self.import_config_file(file_path)
+
         self.push_screen(
             CompactFileOpen(self._dialog_start("config"), filters=import_filters(),
                             places=self.places, kind="config"),
             handle_file_open,
         )
+
+    def import_config_file(self, file_path: Path) -> None:
+        """Replace the working config with `file_path` (.yml or Docklight .ptp).
+
+        The current config is backed up to project.backup.yml first.
+        """
+        try:
+            # Check file extension to determine format
+            if file_path.suffix.lower() == '.ptp':
+                # Docklight format
+                interpreter = DocklightConfigInterpreter()
+                new_config = interpreter.parse_file(file_path)
+                self.log_message(f"Imported Docklight config", 'info')
+            elif file_path.suffix.lower() in {'.yml', '.yaml'}:
+                # YAML format
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    new_config = yaml.safe_load(f)
+            else:
+                self.log_message(f"Unsupported file type: {file_path.suffix}", 'error')
+                return
+            
+            # Validate config
+            is_valid, error_msg = self.validate_config(new_config)
+            
+            if not is_valid:
+                self.log_message(f"Invalid config: {error_msg}", 'error')
+                return
+            
+            # Backup current config
+            if self.config:
+                backup_file = Path("project.backup.yml")
+                with open(backup_file, 'w', encoding='utf-8') as f:
+                    yaml.dump(self.config, f, default_flow_style=False)
+                self.log_message(f"Backed up to {backup_file.name}", 'info')
+            
+            # Load the new config. An import deliberately replaces
+            # project.yml, so an unreadable one no longer blocks saving.
+            self.config = new_config
+            self.config_unreadable = None
+            self.save_config()
+            
+            # Update last_used in settings
+            if 'config' not in self.settings:
+                self.settings['config'] = {}
+            self.settings['config']['last_used'] = str(file_path)
+            self.save_settings()
+            
+            # Reload everything
+            self.action_reload_config()
+            
+            self.log_message(f"Config imported from: {file_path.name}", 'info')
+            self.places.add_recent(file_path, "config")
+            
+        except yaml.YAMLError as e:
+            self.log_message(f"Invalid YAML: {e}", 'error')
+        except Exception as e:
+            self.log_message(f"Error importing: {e}", 'error')
+            log.exception("import of %s failed", file_path)
 
     def action_export_config(self):
         """Export current configuration to a file using file picker."""
@@ -1402,6 +1424,51 @@ class TUIApp(App):
 
     def action_settings(self):
         self.push_screen(SettingsScreen())
+
+    # ========================================================================
+    # RECENT PROJECTS (sidebar, F3)
+    # ========================================================================
+
+    def action_toggle_recent(self):
+        self.query_one(RecentFiles).toggle()
+
+    def action_toggle_buttons(self):
+        self.show_buttons(not self.query_one(DynamicControlButtons).display)
+
+    def show_buttons(self, show: bool):
+        """Show the control buttons panel, or collapse it to its strip.
+
+        Hiding only hides: repeats keep running and edit mode is kept.
+        """
+        self.query_one(DynamicControlButtons).display = show
+        self.query_one("#buttons-strip", SideStrip).display = not show
+
+    def on_dynamic_control_buttons_hide_requested(self, event):
+        self.show_buttons(False)
+
+    def on_side_strip_toggle(self, event: SideStrip.Toggle):
+        if event.strip.id == "buttons-strip":
+            self.show_buttons(True)
+
+    def _places_changed(self) -> bool:
+        """Places' save callback: write settings.yml and update the sidebar."""
+        saved = self._save_settings_or_warn()
+        try:
+            panel = self.query_one(RecentFiles)
+        except (NoMatches, ScreenStackError):
+            return saved  # not running or composed yet, or shutting down
+        if panel.expanded:
+            panel.refresh_list()
+        return saved
+
+    def on_recent_files_open(self, event: RecentFiles.Open):
+        """A project picked in the sidebar: imported as Ctrl+T would, with
+        the current one backed up to project.backup.yml first."""
+        if not event.path.is_file():
+            self.log_message(f"{event.path.name} no longer exists", 'error')
+            self.query_one(RecentFiles).refresh_list()
+        else:
+            self.import_config_file(event.path)
 
     def verbose_errors(self) -> bool:
         return self.settings.get('verbose_errors') is True
