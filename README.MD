@@ -16,6 +16,7 @@ isn't enough. Runs on Windows, macOS and Linux.
 * **Sequences** - pattern-matched automatic replies, with `??` wildcards.
 * **Checksums** - sum8, xor8, lrc8, CRC-16/MODBUS, CRC-16/CCITT.
 * **Docklight import** - `.ptp` projects become buttons and sequences.
+* **Send Command** with live validation and shell-style history (Up / Down).
 * **Auto-connect** on send; port loss is detected and reported.
 * **Settings** (`F2`) - theme, log colors, frame gap, verbose errors.
 

@@ -62,4 +62,3 @@ tests/                           pytest suite, fake serial connection
   focus, because Textual's `Input` binds them to delete-word and end-of-line.
 * At 80×24 the log gets about ten rows and the button panel one row of
   buttons (it scrolls). 100×30 or larger is comfortable.
-* The quick-send box has no command history yet; a successful send clears it.

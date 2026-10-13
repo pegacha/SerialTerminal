@@ -26,7 +26,7 @@ from serialterminal.ui.widgets.dynamic_control_buttons import (
     repeat_marker,
 )
 from serialterminal.ui.widgets.button_editor import ButtonEditor
-from serialterminal.ui.widgets.quick_send import QuickSend
+from serialterminal.ui.widgets.quick_send import QuickSend, clean_history
 from serialterminal.ui.widgets.file_pickers import CompactFileOpen, CompactFileSave
 
 from serialterminal.sequence_handler import (
@@ -193,7 +193,9 @@ class TUIApp(App):
         with Horizontal(id="workspace"):
             with Vertical(id="log-column"):
                 yield MultiFormatLog()
-                yield QuickSend()
+                # Sent commands, for Up/Down in the box; kept in settings.yml.
+                self.settings['send_history'] = clean_history(self.settings.get('send_history'))
+                yield QuickSend(history=self.settings['send_history'])
             yield DynamicControlButtons(config_data=self.config.get('buttons', []),
                                         repeat_marker=self.repeat_marker())
         footer = Footer()
@@ -1005,7 +1007,11 @@ class TUIApp(App):
         connection never costs you what you typed.
         """
         box = self.query_one("#quick-send-input", Input)
-        if self._send_command(box.value, **self.query_one(QuickSend).options()):
+        quick_send = self.query_one(QuickSend)
+        options = quick_send.options()
+        if self._send_command(box.value, **options):
+            quick_send.remember(box.value, options["format_override"])
+            self.save_settings()  # the history lives in settings.yml
             box.value = ""
 
     def _on_frame_received(self, frame_bytes: bytes):

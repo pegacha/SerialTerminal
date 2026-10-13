@@ -90,7 +90,10 @@ format: a red border and a reason (`'G' is not a hex digit`) mean it would not
 send. A failed send keeps your text, including a write the port refused (an
 unplugged adapter); only a successful one clears the box, and `[TX]` is logged
 only for bytes that actually went out. The format, line ending and checksum you
-pick are saved in `project.yml`.
+pick are saved in `project.yml`. **Up** and **Down** in the box step through
+the commands you sent before, each with its format, like a shell's history;
+Down past the newest brings back what you were typing. The last 100 are kept
+in `settings.yml`.
 
 **Filter** (`Ctrl+F`). Shows only log entries containing the text,
 case-insensitive. Each tab matches its own notation, so `41 42` finds a frame

@@ -6,6 +6,11 @@ All notable changes to SerialTerminal. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Command history** in Send Command: Up and Down recall earlier commands,
+  with their format, like a shell. The last 100 are kept in `settings.yml`.
+
 ## [0.3.1] - 2026-10-13
 
 ### Added
