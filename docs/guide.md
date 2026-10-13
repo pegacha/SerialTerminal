@@ -17,7 +17,8 @@ Everything the [README](../README.MD) leaves out: the interface in detail, the c
 | **Send Command** | One-off send: format, line ending, checksum, and live validation of what you type |
 | **Control Buttons** | Your saved commands: create and edit them in the button editor; optionally repeating or sent automatically in reply to a received frame |
 
-Every frame is written to all four tabs with one shared timestamp, prefixed
+Every frame is written to all four tabs with one shared timestamp - for a
+received frame, the time its first byte arrived - prefixed
 `[TX]`, `[RX]`, `[Error]` or `[Sequence]`. The ASCII tab names control
 characters (`<STX>`, `<ACK>`, ...) and keeps line terminators visible, so you
 can see whether a device sent `<CR><LF>`, `<LF>` or `<CR>`; a new line starts
@@ -88,6 +89,12 @@ connected disconnects (the open port would otherwise keep the old settings);
 the next send reconnects with the new ones. If the device goes away - unplugged
 or reset - the log says so once, the status switches to Disconnected, repeating
 buttons stop, and the next send reconnects.
+
+**Timestamps.** Settings (`F2`) > **Timestamps** picks how lines are
+stamped: `12:34:56.789` (default), `12:34:56`, `2026-10-13 12:34:56.789`,
+`+0.016` - seconds since the previous line, handy for reply delays; `Ctrl+W`
+restarts it - or off. It applies to new lines. A received frame can start
+before the line above it was shown, so a since-previous time can be negative.
 
 **Colors.** Sent, received, system, error and sequence-reply lines each have
 their own color, from the theme by default. Change them, and the theme, in

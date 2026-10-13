@@ -41,7 +41,7 @@ from serialterminal.serial_comm.connection import SerialConnection
 from serialterminal.serial_comm.receiver import SerialReceiver
 
 from serialterminal.utils.docklight_interpreter import DocklightConfigInterpreter
-from serialterminal.utils.formatting import TIME_FORMATS, timestamp
+from serialterminal.utils.formatting import TIME_FORMATS, format_stamp
 from serialterminal.utils.payload import build_frame
 from serialterminal.utils.session_capture import SessionCapture
 from serialterminal.utils.places import Places
@@ -57,9 +57,10 @@ class _UnreadableConfig(Exception):
 class SerialData(Message):
     """A received frame, posted from the receive thread."""
 
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, started: datetime | None = None):
         super().__init__()
         self.data = data
+        self.started = started  # when its first byte arrived
 
 
 class SerialPortLost(Message):
@@ -1057,9 +1058,9 @@ class TUIApp(App):
             self.save_settings()  # the history lives in settings.yml
             box.value = ""
 
-    def _on_frame_received(self, frame_bytes: bytes):
-        """Handle received serial data."""
-        self.log_message(frame_bytes, 'rx')
+    def _on_frame_received(self, frame_bytes: bytes, started: datetime | None = None):
+        """Handle received serial data, stamped with when it began arriving."""
+        self.log_message(frame_bytes, 'rx', when=started)
         
         if self.sequence_handler:
             matched_sequence = self.sequence_handler.check_data(frame_bytes)
@@ -1107,10 +1108,13 @@ class TUIApp(App):
         if threading.get_ident() == self._app_thread_id:
             self._on_frame_received(frame_bytes)
         else:
-            self.post_message(SerialData(frame_bytes))
+            # Called on the receive thread before the next frame starts, so
+            # frame_started_at is still this frame's first byte.
+            self.post_message(SerialData(
+                frame_bytes, getattr(self.receiver, "frame_started_at", None)))
 
     def on_serial_data(self, message: SerialData):
-        self._on_frame_received(message.data)
+        self._on_frame_received(message.data, message.started)
 
     # ========================================================================
     # BUTTON EVENT HANDLERS
@@ -1231,14 +1235,19 @@ class TUIApp(App):
     # LOGGING & UI HELPERS
     # ========================================================================
 
-    def log_message(self, message, type: str = ''):
-        """Log a message to the multi-format log panel, and to the capture if recording."""
+    def log_message(self, message, type: str = '', when: datetime | None = None):
+        """Log a message to the multi-format log panel, and to the capture if recording.
+
+        `when` defaults to now; a received frame passes the time its first
+        byte arrived, which is earlier than when it can be shown.
+        """
         # One instant for both, so the capture file and the screen agree.
-        now = datetime.now()
+        now = when or datetime.now()
+        previous, self._last_line_time = getattr(self, '_last_line_time', None), now
         try:
             panel = self.query_one(MultiFormatLog)
-            panel.log_message(message, type, stamp=timestamp(
-                now, milliseconds=self.time_format() == "milliseconds"))
+            panel.log_message(message, type,
+                              stamp=format_stamp(now, self.time_format(), previous))
         except Exception as e:
             # Named `panel`, not `log`: binding `log` here made it local to the
             # function, so this very line raised UnboundLocalError and the real
@@ -1545,7 +1554,7 @@ class TUIApp(App):
         self._save_settings_or_warn()
 
     def time_format(self) -> str:
-        """settings.yml's time_format: milliseconds (default) or seconds."""
+        """settings.yml's time_format: one of TIME_FORMATS, milliseconds by default."""
         choice = self.settings.get('time_format')
         return choice if choice in TIME_FORMATS else 'milliseconds'
 
@@ -1592,6 +1601,7 @@ class TUIApp(App):
             self.query_one(MultiFormatLog).clear()
         except Exception as e:
             log.debug("clear failed: %s", e)
+        self._last_line_time = None  # "since previous line" starts afresh
 
     # ========================================================================
     # APP LIFECYCLE

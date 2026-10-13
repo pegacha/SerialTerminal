@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from datetime import datetime
 from typing import Callable, Optional
 from serialterminal.serial_comm.connection import SerialConnection
 
@@ -55,6 +56,10 @@ class SerialReceiver:
         self.buffer = bytearray()
         self.last_receive_time = 0.0
         self.frame_started = 0.0
+        # Wall-clock time of the first byte of the frame being built. The
+        # frame is only dispatched after the gap, so on_frame reads this to
+        # stamp it with when it began arriving, not when it was shown.
+        self.frame_started_at: datetime | None = None
 
         # Calculate or set timeout
         if message_timeout is not None:
@@ -212,6 +217,7 @@ class SerialReceiver:
                 if data:
                     if not self.buffer:
                         self.frame_started = now
+                        self.frame_started_at = datetime.now()
                     self.buffer.extend(data)
                     self.last_receive_time = now
                     if (len(self.buffer) >= self.MAX_FRAME_BYTES

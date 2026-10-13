@@ -657,6 +657,11 @@ SettingsScreen {
     margin-right: 2;
 }
 
+/* Its options are longer: "2026-10-13 12:34:56.789", "+0.016 (since previous line)". */
+.settings-row #settings-time-format {
+    width: 34;
+}
+
 .settings-sample {
     width: 1fr;
 }

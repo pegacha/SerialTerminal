@@ -21,13 +21,18 @@ All notable changes to SerialTerminal. The format follows
   to open it, as `Ctrl+T` would. Terminals deliver a drop as a pasted path;
   any other paste is unchanged.
 
-- **Timestamps** setting: log lines stamped `12:34:56.789` (default) or
-  `12:34:56`. Recordings keep milliseconds.
+- **Timestamps** setting: `12:34:56.789` (default), `12:34:56`, date and
+  time, time since the previous line (`+0.016`), or off. Recordings keep the
+  full time with milliseconds.
 - In Recent projects, hovering an entry whose name or folder is cut off
   scrolls it into view.
 
 ### Changed
 
+- Received messages are stamped with the time their first byte arrived, not
+  the time they were shown - which was after the frame gap, so `[RX]` times
+  ran about 30 ms late and reply delays measured from the log were too long.
+  Recordings use the same time.
 - Opening the port list rescans the ports, so an adapter plugged in after
   launch is there without pressing Refresh. The selected port is kept.
 

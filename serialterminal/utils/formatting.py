@@ -16,8 +16,14 @@ CONTROL_NAMES = {
 }
 
 
-# Settings (F2) > Timestamps: settings.yml value -> example shown.
-TIME_FORMATS = {"milliseconds": "12:34:56.789", "seconds": "12:34:56"}
+# Settings (F2) > Timestamps: settings.yml value -> what the option shows.
+TIME_FORMATS = {
+    "milliseconds": "12:34:56.789",
+    "seconds": "12:34:56",
+    "date": "2026-10-13 12:34:56.789",
+    "delta": "+0.016 (since previous line)",
+    "off": "Off",
+}
 
 
 def timestamp(now: datetime = None, milliseconds: bool = True) -> str:
@@ -26,13 +32,38 @@ def timestamp(now: datetime = None, milliseconds: bool = True) -> str:
     stamp = (now or datetime.now()).strftime("%H:%M:%S.%f")
     return stamp[:-3] if milliseconds else stamp[:8]
 
+
+def format_stamp(when: datetime, time_format: str, previous: datetime | None = None) -> str:
+    """The stamp for a line at `when` in one of TIME_FORMATS; '' for off.
+
+    "delta" is the time since `previous` (the line before), in seconds; it is
+    negative when a received frame - stamped at its first byte - began before
+    the line shown just above it.
+    """
+    if time_format == "off":
+        return ""
+    if time_format == "seconds":
+        return timestamp(when, milliseconds=False)
+    if time_format == "date":
+        return when.strftime("%Y-%m-%d ") + timestamp(when)
+    if time_format == "delta":
+        seconds = 0.0 if previous is None else (when - previous).total_seconds()
+        return f"{seconds:+.3f}"
+    return timestamp(when)
+
+
+def _head(stamp: str) -> str:
+    """What goes before a line's text: "[stamp] ", or nothing with timestamps off."""
+    return f"[{stamp}] " if stamp else ""
+
+
 def format_log_message(message, stamp: str = None) -> str:
     """Add timestamp to a log message."""
     stamp = stamp if stamp is not None else timestamp()
     
     if isinstance(message, bytes):
-        return f"[{stamp}] {message.hex()}"
-    return f"[{stamp}] {message}"
+        return f"{_head(stamp)}{message.hex()}"
+    return f"{_head(stamp)}{message}"
 
 def format_log_message_ascii(message, stamp: str = None) -> str:
     """Format log message as ASCII text with timestamp."""
@@ -72,12 +103,12 @@ def format_log_message_ascii(message, stamp: str = None) -> str:
         if current or not lines:
             lines.append(''.join(current))
 
-        head = f"[{stamp}] "
+        head = _head(stamp)
         indent = " " * len(head)  # continuation lines line up with the data
         return "\n".join(head + line if k == 0 else indent + line
                          for k, line in enumerate(lines))
 
-    return f"[{stamp}] {message}"
+    return f"{_head(stamp)}{message}"
 
 def format_log_message_hex(message, stamp: str = None) -> str:
     """Format log message as space-separated hex bytes with timestamp."""
@@ -85,9 +116,9 @@ def format_log_message_hex(message, stamp: str = None) -> str:
     
     if isinstance(message, bytes):
         hex_str = " ".join(f"{byte:02X}" for byte in message)
-        return f"[{stamp}] {hex_str}"
+        return f"{_head(stamp)}{hex_str}"
     
-    return f"[{stamp}] {message}"
+    return f"{_head(stamp)}{message}"
 
 def format_log_message_decimal(message, stamp: str = None) -> str:
     """Format log message as space-separated decimal bytes with timestamp."""
@@ -95,9 +126,9 @@ def format_log_message_decimal(message, stamp: str = None) -> str:
     
     if isinstance(message, bytes):
         dec_str = " ".join(str(byte) for byte in message)
-        return f"[{stamp}] {dec_str}"
+        return f"{_head(stamp)}{dec_str}"
     
-    return f"[{stamp}] {message}"
+    return f"{_head(stamp)}{message}"
 
 def format_log_message_binary(message, stamp: str = None) -> str:
     """Format log message as space-separated 8-bit binary bytes with timestamp."""
@@ -105,6 +136,6 @@ def format_log_message_binary(message, stamp: str = None) -> str:
     
     if isinstance(message, bytes):
         bin_str = " ".join(f"{byte:08b}" for byte in message)
-        return f"[{stamp}] {bin_str}"
+        return f"{_head(stamp)}{bin_str}"
     
-    return f"[{stamp}] {message}"
+    return f"{_head(stamp)}{message}"

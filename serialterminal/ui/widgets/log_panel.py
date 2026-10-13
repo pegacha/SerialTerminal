@@ -76,6 +76,9 @@ class _Entry(str):
     """A log entry's text, carrying its kind so a redraw can recolour it."""
 
     kind: str = "system"
+    # Length of the leading "[stamp] " (0 with timestamps off); None when
+    # unknown, for entries written without one.
+    stamp_len: int | None = None
 
 
 class LogPanel(Log):
@@ -103,7 +106,7 @@ class LogPanel(Log):
         self._kind_styles: dict = {}
         super().__init__(**kwargs)
 
-    def write_message(self, message: str, kind: str = "system"):
+    def write_message(self, message: str, kind: str = "system", stamp_len: int | None = None):
         """Record an already-formatted entry and show it if it should be visible.
 
         Named write_message, not log: MessagePump.log is a property holding
@@ -112,6 +115,7 @@ class LogPanel(Log):
         """
         entry = _Entry(message)
         entry.kind = kind
+        entry.stamp_len = stamp_len
         if len(self._entries) == self._entries.maxlen and self._matches(self._entries[0]):
             self._match_count -= 1  # the oldest entry is about to be evicted
         self._entries.append(entry)
@@ -154,7 +158,10 @@ class LogPanel(Log):
         # Skip the leading "[HH:MM:SS.mmm] ": otherwise "41" on the HEX tab
         # matches every entry logged at second :41. The [TX]/[RX] tag stays
         # searchable.
-        if entry.startswith("[") and "] " in entry:
+        stamp_len = getattr(entry, "stamp_len", None)
+        if stamp_len is not None:
+            entry = entry[stamp_len:]  # exact, whatever the format, or off
+        elif entry.startswith("[") and "] " in entry:
             entry = entry.split("] ", 1)[1]
         return self._filter in entry.lower()
 
@@ -284,47 +291,36 @@ class MultiFormatLog(Container):
         # the tabs disagreed about when it arrived.
         stamp = stamp if stamp is not None else timestamp()
         kind = kind_for_type(type)
+        stamped = bool(stamp)  # '' means timestamps off
+        stamp_len = len(f"[{stamp}] ") if stamped else 0
+
+        def write(tab: str, text: str):
+            self.query_one(f"#tab-{tab} LogPanel").write_message(text, kind, stamp_len)
 
         try:
             # For TX/RX messages, format in all encoding types
             if type in ('tx', 'rx'):
-                # Format the data first, then add prefix
-                ascii_msg = format_log_message_ascii(message, stamp)
-                hex_msg = format_log_message_hex(message, stamp)
-                dec_msg = format_log_message_decimal(message, stamp)
-                bin_msg = format_log_message_binary(message, stamp)
-
-                # Add type prefix after timestamp
-                ascii_msg = self._add_prefix_after_timestamp(ascii_msg, type_prefix)
-                hex_msg = self._add_prefix_after_timestamp(hex_msg, type_prefix)
-                dec_msg = self._add_prefix_after_timestamp(dec_msg, type_prefix)
-                bin_msg = self._add_prefix_after_timestamp(bin_msg, type_prefix)
-
-                self.query_one("#tab-ascii LogPanel").write_message(ascii_msg, kind)
-                self.query_one("#tab-hex LogPanel").write_message(hex_msg, kind)
-                self.query_one("#tab-decimal LogPanel").write_message(dec_msg, kind)
-                self.query_one("#tab-binary LogPanel").write_message(bin_msg, kind)
+                # Format the data first, then add the [TX]/[RX] tag after the stamp
+                for tab, formatter in (("ascii", format_log_message_ascii),
+                                       ("hex", format_log_message_hex),
+                                       ("decimal", format_log_message_decimal),
+                                       ("binary", format_log_message_binary)):
+                    write(tab, self._add_prefix_after_timestamp(
+                        formatter(message, stamp), type_prefix, stamped))
 
             elif type == 'seq_comment':
                 # Sequence comments always display as plain text in all tabs
-                formatted = format_log_message(message, stamp)
-                formatted = self._add_prefix_after_timestamp(formatted, type_prefix)
-
-                self.query_one("#tab-ascii LogPanel").write_message(formatted, kind)
-                self.query_one("#tab-hex LogPanel").write_message(formatted, kind)
-                self.query_one("#tab-decimal LogPanel").write_message(formatted, kind)
-                self.query_one("#tab-binary LogPanel").write_message(formatted, kind)
+                formatted = self._add_prefix_after_timestamp(
+                    format_log_message(message, stamp), type_prefix, stamped)
+                for tab in ("ascii", "hex", "decimal", "binary"):
+                    write(tab, formatted)
 
             else:
-                # Non TX/RX messages (errors, info, etc.) only go to ASCII tab
-                # or add to all tabs as plain text
+                # Non TX/RX messages (errors, info, etc.): plain text in every tab
                 full_message = f"{type_prefix}{message}" if isinstance(message, str) else message
                 formatted = format_log_message(full_message, stamp)
-
-                self.query_one("#tab-ascii LogPanel").write_message(formatted, kind)
-                self.query_one("#tab-hex LogPanel").write_message(formatted, kind)
-                self.query_one("#tab-decimal LogPanel").write_message(formatted, kind)
-                self.query_one("#tab-binary LogPanel").write_message(formatted, kind)
+                for tab in ("ascii", "hex", "decimal", "binary"):
+                    write(tab, formatted)
 
         except Exception as e:
             # Fallback logging
@@ -338,20 +334,27 @@ class MultiFormatLog(Container):
             # changed, so it went stale while traffic kept arriving.
             self._update_status()
 
-    def _add_prefix_after_timestamp(self, formatted_msg: str, prefix: str) -> str:
+    def _add_prefix_after_timestamp(self, formatted_msg: str, prefix: str,
+                                    stamped: bool = True) -> str:
         """
         Add a prefix after the timestamp in a formatted message.
         Converts: "[12:34:56.789] data" -> "[12:34:56.789] [TX] data"
+        With timestamps off (`stamped` False) the prefix leads: "[TX] data".
         """
-        if prefix and "] " in formatted_msg:
-            parts = formatted_msg.split("] ", 1)
-            if len(parts) == 2:
-                first, *rest = f"{parts[0]}] {prefix}{parts[1]}".split("\n")
-                # Shift continuation lines by the prefix too, so a multi-line
-                # ASCII frame stays aligned under its own data column.
-                pad = " " * len(prefix)
-                return "\n".join([first] + [pad + line for line in rest])
-        return formatted_msg
+        if not prefix:
+            return formatted_msg
+        if stamped:
+            if "] " not in formatted_msg:
+                return formatted_msg
+            head, body = formatted_msg.split("] ", 1)
+            head += "] "
+        else:
+            head, body = "", formatted_msg
+        first, *rest = f"{head}{prefix}{body}".split("\n")
+        # Shift continuation lines by the prefix too, so a multi-line
+        # ASCII frame stays aligned under its own data column.
+        pad = " " * len(prefix)
+        return "\n".join([first] + [pad + line for line in rest])
 
     def clear(self):
         """Clear all log panels."""
