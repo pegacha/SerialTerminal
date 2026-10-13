@@ -11,6 +11,9 @@ verbose_errors: false
 # Log timestamps: milliseconds (12:34:56.789), seconds (12:34:56), date
 # (2026-10-13 12:34:56.789), delta (+0.016, since the previous line) or off.
 time_format: milliseconds
+# Update check at start (once a day, GitHub's latest release). Settings (F2).
+updates:
+  check: true
 # Marker on buttons that repeat on a timer: auto, symbol (↻) or text ([R]).
 # Auto picks [R] in terminals that can't draw ↻. Settings (F2) changes this.
 repeat_marker: auto

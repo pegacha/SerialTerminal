@@ -16,6 +16,15 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+@pytest.fixture(autouse=True)
+def no_update_check(monkeypatch):
+    """The app checks GitHub for a new release when it starts. Never from a
+    test: no network, no dependence on what's published. Tests of the check
+    itself replace this with their own fake."""
+    import serialterminal.updater as updater
+    monkeypatch.setattr(updater, "fetch_latest", lambda timeout=5.0: None)
+
+
 @pytest.fixture
 def isolated_cwd(tmp_path, monkeypatch):
     """Run the test in an empty directory, leaving the real config alone."""

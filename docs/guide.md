@@ -96,6 +96,20 @@ stamped: `12:34:56.789` (default), `12:34:56`, `2026-10-13 12:34:56.789`,
 restarts it - or off. It applies to new lines. A received frame can start
 before the line above it was shown, so a since-previous time can be negative.
 
+**Updates.** At start, at most once a day, the app asks GitHub's API for the
+latest published release of `pegacha/SerialTerminal` - no account, nothing
+sent but the request; offline it just says nothing. A newer release opens a
+dialog with its notes: **Update and restart** closes the app, runs
+`pip install --upgrade` with the release's attached wheel (or the tag's
+source archive), then starts the new version; **Skip this version** stops it
+being offered at start; **Later** asks again tomorrow. Started by the
+`serialterminal` command on Windows, the update runs in a new window once the
+app has closed, because Windows won't let pip replace a running
+`serialterminal.exe`. Running from a git clone or an editable install, the
+dialog says to `git pull` instead - pip would install a second copy the
+checkout never uses. Settings (`F2`) > Updates turns the check off and has
+**Check now**.
+
 **Colors.** Sent, received, system, error and sequence-reply lines each have
 their own color, from the theme by default. Change them, and the theme, in
 **Settings** (`F2`). Settings apply and save as you change them; if a file

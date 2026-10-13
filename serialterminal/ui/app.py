@@ -9,7 +9,7 @@ from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual_fspicker import Filters
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 import re
@@ -31,6 +31,8 @@ from serialterminal.ui.widgets.button_editor import ButtonEditor
 from serialterminal.ui.widgets.quick_send import QuickSend, clean_history
 from serialterminal.ui.widgets.recent_panel import RecentFiles
 from serialterminal.ui.widgets.side_strip import SideStrip
+from serialterminal.ui.widgets.update_screen import UpdateScreen
+from serialterminal import updater
 from serialterminal.ui.widgets.file_pickers import CompactFileOpen, CompactFileSave
 
 from serialterminal.sequence_handler import (
@@ -243,6 +245,8 @@ class TUIApp(App):
         # Theme colours change with the theme - including a change made from
         # the command palette - so recolour the log whenever it changes.
         self.theme_changed_signal.subscribe(self, lambda theme: self._apply_log_colors())
+        if self.update_checks_enabled() and self._update_check_due():
+            self.check_for_updates()
         self.refresh_serial_ports()
         # Opening the port list rescans, as Refresh does.
         self.query_one("#serial-port-select", PortSelect).before_open = self.refresh_serial_ports
@@ -1498,6 +1502,71 @@ class TUIApp(App):
             self.query_one(RecentFiles).refresh_list()
         else:
             self.import_config_file(event.path)
+
+    # ------------------------------------------------------------------
+    # Updates
+    # ------------------------------------------------------------------
+
+    def _update_settings(self) -> dict:
+        updates = self.settings.get('updates')
+        if not isinstance(updates, dict):
+            updates = self.settings['updates'] = {}
+        return updates
+
+    def update_checks_enabled(self) -> bool:
+        """settings.yml's updates.check; on unless set to false."""
+        return self._update_settings().get('check') is not False
+
+    def set_update_checks(self, on: bool):
+        self._update_settings()['check'] = bool(on)
+        self._save_settings_or_warn()
+
+    def _update_check_due(self) -> bool:
+        try:
+            last = datetime.fromisoformat(str(self._update_settings().get('last_checked')))
+        except ValueError:
+            return True
+        return datetime.now() - last >= timedelta(hours=updater.CHECK_INTERVAL_HOURS)
+
+    def check_for_updates(self, manual: bool = False):
+        """Ask GitHub for the latest release, off the UI thread.
+
+        At start (manual False) it says nothing unless there is something new,
+        and a version the user skipped is not offered again. Check now
+        (Settings) always reports.
+        """
+        def work():
+            release = updater.fetch_latest()
+            try:
+                self.call_from_thread(self._update_checked, release, manual)
+            except RuntimeError:
+                pass  # the app closed while GitHub was answering
+
+        self.run_worker(work, thread=True, exclusive=True, group="update-check")
+
+    def _update_checked(self, release, manual: bool):
+        updates = self._update_settings()
+        updates['last_checked'] = datetime.now().isoformat(timespec='seconds')
+        self.save_settings()
+        if release is None or not updater.is_newer(release.version):
+            if manual:
+                self.notify(f"You have the latest version ({__version__})." if release
+                            else "Couldn't get the latest release from GitHub.",
+                            severity="information" if release else "warning")
+            return
+        if not manual and updates.get('skip') == release.version:
+            return
+
+        def answered(choice):
+            if choice == "skip":
+                updates['skip'] = release.version
+                self._save_settings_or_warn()
+            elif choice == "update":
+                # pip runs once the app has closed - see __main__.
+                self.update_target = release.install_target
+                self.exit()
+
+        self.push_screen(UpdateScreen(release, updater.source_checkout()), answered)
 
     def verbose_errors(self) -> bool:
         return self.settings.get('verbose_errors') is True

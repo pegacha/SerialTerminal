@@ -1,4 +1,5 @@
 import argparse
+import subprocess
 import sys
 
 from serialterminal import __version__, path_setup
@@ -30,7 +31,25 @@ def main(argv=None):
     from serialterminal.ui.app import TUIApp
 
     path_setup.offer_on_first_launch()
-    TUIApp().run()
+    app = TUIApp()
+    app.run()
+
+    # "Update and restart" in the update dialog: pip runs now, with the app
+    # closed and its output in this console, then the new version starts.
+    target = getattr(app, "update_target", None)
+    if target:
+        from serialterminal import updater
+        if updater.launched_by_exe():
+            updater.install_after_exit(target)
+            print("SerialTerminal is updating in a new window and will start again there.")
+            return 0
+        code = updater.install(target)
+        if code != 0:
+            print("The update failed; SerialTerminal is unchanged. To retry by hand:\n"
+                  f"  {sys.executable} -m pip install --upgrade {target}")
+            return code
+        print("Updated. Starting SerialTerminal...", flush=True)
+        return subprocess.call([sys.executable, "-m", "serialterminal", *(argv or [])])
     return 0
 
 

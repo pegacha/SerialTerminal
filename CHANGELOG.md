@@ -27,6 +27,12 @@ All notable changes to SerialTerminal. The format follows
 - In Recent projects, hovering an entry whose name or folder is cut off
   scrolls it into view.
 
+- **Update check**: at start, at most once a day, SerialTerminal asks GitHub
+  for the latest release and offers a newer one - Update and restart, Skip
+  this version, or Later. It installs with pip once the app has closed, from
+  the release's wheel or its source archive. A source checkout is told to
+  `git pull` instead. Settings has the switch and a Check now button.
+
 ### Changed
 
 - Received messages are stamped with the time their first byte arrived, not

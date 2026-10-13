@@ -61,6 +61,12 @@ on Linux, join the `dialout` group to open ports (see
 | `F4` | Show / hide the control buttons (right) |
 | `Ctrl+Q` | Quit |
 
+## Updates
+
+At start, at most once a day, SerialTerminal asks GitHub for the latest
+release; if it's newer, it offers to install it and restart. Nothing is sent
+but that request. Turn it off, or check now, in Settings (`F2`).
+
 ## Files
 
 * `project.yml` - serial settings, buttons and sequences. Holds your device's

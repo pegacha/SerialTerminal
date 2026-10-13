@@ -154,6 +154,15 @@ class SettingsScreen(ModalScreen):
                                        id="settings-verbose-errors")
                     yield Static("Adds the system's message and a hint.",
                                  classes="settings-note")
+
+                with section("Updates"):
+                    with Horizontal(classes="settings-row"):
+                        yield Checkbox("Check for updates at start",
+                                       value=app.update_checks_enabled(),
+                                       id="settings-update-check")
+                        yield Button("Check now", id="settings-update-now", compact=True)
+                    yield Static("Asks GitHub once a day for a newer release.",
+                                 classes="settings-note")
             with Horizontal(id="settings-buttons"):
                 yield Button("Reset colors", id="settings-reset", compact=True,
                              tooltip="Back to the default log colors")
@@ -225,6 +234,9 @@ class SettingsScreen(ModalScreen):
         if event.checkbox.id == "settings-verbose-errors":
             event.stop()
             self.app.set_verbose_errors(event.value)
+        elif event.checkbox.id == "settings-update-check":
+            event.stop()
+            self.app.set_update_checks(event.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "settings-reset":
@@ -236,6 +248,9 @@ class SettingsScreen(ModalScreen):
         elif event.button.id == "settings-close":
             event.stop()
             self.dismiss()
+        elif event.button.id == "settings-update-now":
+            event.stop()
+            self.app.check_for_updates(manual=True)
 
     def action_close(self) -> None:
         self.dismiss()
