@@ -4,6 +4,7 @@ from textual.message import Message
 from textual.widgets import Footer, Static, Button, Select, Input
 from textual.containers import Horizontal, Vertical
 from textual.widgets.select import InvalidSelectValueError
+from textual import events
 from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
@@ -44,6 +45,7 @@ from serialterminal.utils.formatting import timestamp
 from serialterminal.utils.payload import build_frame
 from serialterminal.utils.session_capture import SessionCapture
 from serialterminal.utils.places import Places
+from serialterminal.utils.dropped import dropped_project
 
 log = logging.getLogger("serialterminal.app")
 
@@ -214,6 +216,23 @@ class TUIApp(App):
         footer = Footer()
         footer.compact = True  # an attribute, not a constructor argument, in Textual 4.0
         yield footer
+
+    async def on_event(self, event: events.Event) -> None:
+        """Open a project file dropped onto the window.
+
+        Terminals deliver a drop as a paste of the file's path. Textual hands
+        a paste to the focused widget, so it's caught here first - otherwise
+        Send Command would take the path as text. Only on the main screen: in
+        a dialog a pasted path stays text, e.g. typed into a file dialog.
+        """
+        if (isinstance(event, events.Paste) and not event.is_forwarded
+                and len(self.screen_stack) == 1):
+            path = dropped_project(event.text)
+            if path is not None:
+                event.stop()
+                self.import_config_file(path)
+                return
+        await super().on_event(event)
 
     def on_mount(self):
         """Initialize UI components on mount."""

@@ -36,6 +36,12 @@ are shown at start and can be hidden; repeats keep running while hidden. A
 collapsed panel leaves a thin strip with its name written downwards - click
 it to open the panel again.
 
+**Dropping files.** Drag a project file (`.yml`, `.yaml` or Docklight
+`.ptp`) onto the window to open it, as `Ctrl+T` would. A terminal passes a
+drop on as the file's path, typed as if pasted; SerialTerminal recognises a
+path to an existing project file and imports it instead of pasting it. Other
+files, and any paste inside a dialog, stay plain text.
+
 **Layout.** At 100 columns or more, control buttons sit in a sidebar to the
 right of the log, so they never take rows from it. Narrower than that, a
 sidebar would leave the log too thin for a hex frame, so the buttons move under

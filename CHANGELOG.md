@@ -17,6 +17,10 @@ All notable changes to SerialTerminal. The format follows
   shown at start. A collapsed panel leaves a strip with its name written
   downwards; click it to bring the panel back.
 
+- **Drop a project file** (`.yml`, `.yaml`, Docklight `.ptp`) onto the window
+  to open it, as `Ctrl+T` would. Terminals deliver a drop as a pasted path;
+  any other paste is unchanged.
+
 ### Changed
 
 - Opening the port list rescans the ports, so an adapter plugged in after

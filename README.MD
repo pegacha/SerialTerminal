@@ -40,7 +40,8 @@ on Linux, join the `dialout` group to open ports (see
 
 ## Quick start
 
-1. Copy `project.example.yml` to `project.yml`, or load it with `Ctrl+T`.
+1. Copy `project.example.yml` to `project.yml`, load it with `Ctrl+T`, or drag
+   it onto the window.
 2. Pick the port and line settings at the top.
 3. Type in **Send Command** or press a button - it connects as needed.
 
