@@ -11,6 +11,11 @@ All notable changes to SerialTerminal. The format follows
 - **Command history** in Send Command: Up and Down recall earlier commands,
   with their format, like a shell. The last 100 are kept in `settings.yml`.
 
+### Changed
+
+- Opening the port list rescans the ports, so an adapter plugged in after
+  launch is there without pressing Refresh. The selected port is kept.
+
 ## [0.3.1] - 2026-10-13
 
 ### Added

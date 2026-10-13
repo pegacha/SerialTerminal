@@ -3,6 +3,24 @@ from textual.widgets import Button, Select, Static
 from textual.containers import Vertical, Horizontal
 
 
+class PortSelect(Select):
+    """The port list. It rescans the ports each time it opens, so an adapter
+    plugged in after launch is there without pressing Refresh.
+
+    `before_open` is called just before the list is shown; it may replace the
+    options (set_options leaves the list open).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.before_open = None
+
+    def _watch_expanded(self, expanded: bool) -> None:
+        if expanded and self.before_open is not None:
+            self.before_open()
+        super()._watch_expanded(expanded)
+
+
 class SerialBar(Vertical):
     """Serial port configuration bar.
 
@@ -20,7 +38,7 @@ class SerialBar(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="serial-row-top"):
-            yield Select(
+            yield PortSelect(
                 options=[("No port", "none")],
                 value="none",
                 id="serial-port-select",

@@ -12,7 +12,7 @@ Everything the [README](../README.MD) leaves out: the interface in detail, the c
 
 | Area | What it does |
 | ---- | ------------ |
-| **Serial Config** | Port, baud, parity, data bits, stop bits, connect/disconnect, rescan ports |
+| **Serial Config** | Port, baud, parity, data bits, stop bits, connect/disconnect, rescan ports (opening the port list rescans too) |
 | **Log** | Four tabs — ASCII, HEX, Decimal, Binary — showing the same traffic in each notation, with filter, pause and recording |
 | **Send Command** | One-off send: format, line ending, checksum, and live validation of what you type |
 | **Control Buttons** | Your saved commands: create and edit them in the button editor; optionally repeating or sent automatically in reply to a received frame |

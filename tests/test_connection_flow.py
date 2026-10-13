@@ -608,3 +608,42 @@ class TestContinuousStream:
         assert time.monotonic() - start < SerialReceiver.MAX_FRAME_SECONDS + 0.5
         receiver.stop()
         assert all(len(f) < SerialReceiver.MAX_FRAME_BYTES + 64 for f in frames)
+
+
+class TestPortListRescansWhenOpened:
+    async def test_opening_the_list_finds_a_newly_plugged_adapter(self, write_config, make_app,
+                                                                   monkeypatch):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            ports = [("COM_OLD", "COM_OLD", "old")]
+            monkeypatch.setattr(SerialConnection, "list_ports", staticmethod(lambda: list(ports)))
+            app.refresh_serial_ports()
+            select = offer_ports(app, "COM_OLD")
+            select.value = "COM_OLD"
+            ports.append(("COM_NEW", "COM_NEW", "plugged in after launch"))
+            await pilot.click("#serial-port-select")
+            await pilot.pause()
+            assert select.expanded, "the list stays open"
+            assert "COM_NEW" in [value for _, value in select._options]
+            assert select.value == "COM_OLD", "the selection survives the rescan"
+
+    async def test_rescan_while_connected_keeps_the_connection(self, write_config, make_app,
+                                                               monkeypatch):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            monkeypatch.setattr(SerialConnection, "list_ports",
+                                staticmethod(lambda: [("COM_FAKE", "COM_FAKE", "fake")]))
+            port = install(app, FakePort())
+            offer_ports(app, "COM_FAKE").value = "COM_FAKE"
+            await pilot.click("#btn-ping")
+            await pilot.pause()
+            assert port.connected
+            await pilot.click("#serial-port-select")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert port.connected and app.serial_conn.connected

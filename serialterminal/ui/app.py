@@ -20,7 +20,7 @@ import logging
 from serialterminal import __version__
 from serialterminal.ui.widgets.log_panel import MultiFormatLog, DEFAULT_LOG_COLORS, KINDS
 from serialterminal.ui.widgets.settings_screen import SettingsScreen
-from serialterminal.ui.widgets.serial_bar import SerialBar
+from serialterminal.ui.widgets.serial_bar import PortSelect, SerialBar
 from serialterminal.ui.widgets.dynamic_control_buttons import (
     REPEAT_MARKER_CHOICES, ControlButton, DynamicControlButtons, RESERVED_IDS, _widget_id,
     repeat_marker,
@@ -211,6 +211,8 @@ class TUIApp(App):
         # the command palette - so recolour the log whenever it changes.
         self.theme_changed_signal.subscribe(self, lambda theme: self._apply_log_colors())
         self.refresh_serial_ports()
+        # Opening the port list rescans, as Refresh does.
+        self.query_one("#serial-port-select", PortSelect).before_open = self.refresh_serial_ports
         self._apply_serial_config_to_ui()
         self._report_config_problems()
 
