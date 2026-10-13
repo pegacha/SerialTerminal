@@ -15,7 +15,7 @@ Windows, macOS and Linux.
 ## Requirements
 
 * Python 3.10 or newer (the code uses PEP 604 `X | Y` annotations)
-* `textual >= 4.0`, `pyserial >= 3.5`, `pyyaml >= 6.0.3`, `textual-fspicker >= 0.2.0`
+* `textual >= 8.2`, `pyserial >= 3.5`, `pyyaml >= 6.0.3`, `textual-fspicker >= 1.0.1`
   (the suite is run against exactly these minimums as well as the latest)
 
 ## Installing
@@ -114,7 +114,8 @@ It follows Docklight's sequence definition:
   the same names the log uses; use HEX for bytes above 7F. **Pos.** shows the
   byte under the cursor and the total.
 * **3 - Additional settings**
-  * *Repeat* - send every N seconds while toggled on.
+  * *Repeat* - send every N seconds while toggled on. Repeating buttons are
+    marked ↻ (or `[R]`, see below).
   * *Checksum* - computed over the sequence and appended.
   * *Line ending* - added after the checksum; ASCII sequences only.
   * *Auto-send* - also send this button whenever a matching frame is received
@@ -125,6 +126,26 @@ It follows Docklight's sequence definition:
   **Help**.
 
 Editing a button leaves other buttons' repeats running.
+
+**Connecting.** Pressing a button or sending a command while disconnected
+connects first, with the settings shown, so there's no need to press Connect.
+If no port is selected or it won't open, the log says why and nothing is sent.
+Changing the port, or the baud rate, parity, data bits or stop bits, while
+connected disconnects (the open port would otherwise keep the old settings);
+the next send reconnects with the new ones. If the device goes away - unplugged
+or reset - the log says so once, the status switches to Disconnected, repeating
+buttons stop, and the next send reconnects.
+
+**Colors.** Sent, received, system, error and sequence-reply lines each have
+their own color, from the theme by default. Change them, and the theme, in
+**Settings** (`F2`). Settings apply and save as you change them; if a file
+can't be written, a notification says so.
+
+**Errors.** A serial-port problem shows as one short line, such as
+`Error: couldn't open COM4` or `Error: send failed`. Turn on **Verbose COM
+errors** in Settings to also see the system's message and what to try (for
+example, joining the `dialout` group on Linux). The full detail is always in
+`serialterminal.log`.
 
 **Send Command.** The input is checked as you type against the selected
 format: a red border and a reason (`'G' is not a hex digit`) mean it would not
@@ -157,6 +178,14 @@ Lines look like:
 
 ![Filtering the HEX tab for Modbus frames while recording](docs/screenshots/filter-record.svg)
 
+**Recent files and favorites.** The import, export and record dialogs have a
+**Recent files** list (the last ten configs imported or exported, or recordings
+made) and a **Favorites** list. **☆ Folder** adds the folder you're looking at;
+**☆ File** adds the file named in the box; press again (★) to remove. Picking a
+file in an open dialog opens it straight away; in a save dialog it goes to its
+folder and fills in the name. Dialogs start in the folder of the last file used.
+Both lists live in `settings.yml`.
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |
@@ -171,6 +200,7 @@ Lines look like:
 | `Ctrl+F` | Filter the log; `Esc` closes |
 | `Ctrl+B` | Pause / resume the log view |
 | `Ctrl+S` | Start / stop recording the session to a file |
+| `F2` | Settings: theme, log colors, frame gap, repeat marker, verbose errors |
 | `Ctrl+R` | Reload `styles.tcss` (not shown in the footer) |
 
 `Ctrl+W` and `Ctrl+E` don't work while a text box has focus, because the box
@@ -193,9 +223,22 @@ Two files, with different jobs:
 
   or load `project.example.yml` with `Ctrl+T`. To share a config, export a copy
   with `Ctrl+E`; `Ctrl+T` imports one (YAML or Docklight `.ptp`).
-* **`settings.yml`** — per-machine preferences (theme, last imported path).
-  Not committed; copy `settings.example.yml` to start. Created with defaults on
-  first launch if missing.
+* **`settings.yml`** — per-machine preferences: theme, log colors, repeat marker, recent files
+  and favorites. Not committed; copy `settings.example.yml` to start. Created
+  with defaults on first launch if missing.
+
+  ```yaml
+  ui:
+    theme: gruvbox
+  verbose_errors: false  # true: COM errors include the system message and a hint
+  repeat_marker: auto  # symbol (↻), text ([R]) or auto - see Repeating buttons
+  log_colors:          # optional; set from Settings (F2)
+    tx: $primary       # a theme color ($primary, $success, $warning, $error,
+    rx: $success       # $accent, $foreground, $foreground-muted...) or #RRGGBB
+    system: $foreground-muted
+    error: $error
+    sequence: $warning
+  ```
 
 The theme lives in `settings.yml` only, so exporting a project doesn't carry your
 colour scheme to whoever opens it. A `ui.theme` left in an older `project.yml` is
@@ -226,10 +269,11 @@ serial:
   parity: N           # N, E, O, M, S
   data_bits: '8'      # 5, 6, 7, 8   (quoted - these are strings)
   stop_bits: '1'      # 1, 1.5, 2
+  frame_gap: auto     # or milliseconds, e.g. 100 - see Troubleshooting
 ```
 
-All five fields are restored on launch. If a saved port is gone (adapter
-unplugged) the log says so rather than connecting to something else.
+All fields are restored on launch. If a saved port is gone (adapter unplugged)
+the log says so rather than connecting to something else.
 
 ### Quick send
 
@@ -273,6 +317,13 @@ A button with `repeat` greater than 0 toggles: first press starts the interval
 and highlights the button, second press stops it. Repeats also stop on
 disconnect and on a config reload (`Ctrl+L`), but not when another button is
 edited.
+
+Repeating buttons are marked with ↻ in the accent color, before the label.
+A terminal can't report whether its font has a glyph, so **Repeat marker** in
+Settings (`F2`) defaults to *Auto*: ↻ in Windows Terminal, VS Code and macOS
+and Linux terminals, which borrow it from a fallback font, and `[R]` in the old
+Windows console and the Linux text console, which can't draw it. If you see a
+box or `?` instead, choose `[R]`.
 
 A button with `auto_send` works like a sequence whose reply is the button
 itself - use whichever fits. Sequences are what a Docklight import produces.
@@ -386,9 +437,14 @@ the traffic, record a session with `Ctrl+S`. Tail it while reproducing:
 tail -f serialterminal.log
 ```
 
-Received bytes are framed by an inter-byte gap derived from the baud rate —
-three character times, clamped to 5–200 ms. A device that pauses mid-frame at a
-low baud rate may be split across log lines.
+**One message shows up as several lines, or several as one.** Received bytes
+become one log entry until the line has been quiet for the **Frame gap** set in
+Settings (`F2`). `auto` is 30 ms - longer than USB-serial adapters' bursts (an FTDI
+chip delivers data every 16 ms by default) - or three character times at very
+low baud rates, up to 200 ms. If a device pauses mid-message, raise the gap; if
+separate messages run together, lower it. It applies immediately and is saved
+with the project. A device that never pauses is shown in pieces of at most
+4 KB or half a second.
 
 ---
 

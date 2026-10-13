@@ -49,6 +49,7 @@ class TestConnectionHints:
 
         async with app.run_test() as pilot:
             await pilot.pause()
+            app.settings["verbose_errors"] = True  # hints are part of the verbose form
             select = app.query_one("#serial-port-select", Select)
             select.set_options([("No port", "none"), ("/dev/ttyUSB0", "/dev/ttyUSB0")])
             select.value = "/dev/ttyUSB0"

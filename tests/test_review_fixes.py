@@ -232,7 +232,7 @@ class TestSendFailures:
             await pilot.pause()
             assert box.value == "PING"
             assert "[TX]" not in tab_text(app)
-            assert "Send failed" in tab_text(app)
+            assert "Error: send failed" in tab_text(app)
 
     async def test_empty_send_is_refused(self, write_config, make_app):
         write_config(MINIMAL_CONFIG)
@@ -434,7 +434,12 @@ class TestDisplay:
         async with app.run_test(size=(120, 36)) as pilot:
             await pilot.pause()
             app.set_focus(None)
-            await pilot.pause()
+            # The footer rebuilds its keys asynchronously after a focus change;
+            # under load one pause isn't always enough, so wait for them.
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if app.query("FooterKey"):
+                    break
             visible = {
                 key.description
                 for key in app.query("FooterKey")

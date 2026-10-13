@@ -1,5 +1,6 @@
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.widgets import Footer, Static, Button, Select, Input
 from textual.containers import Horizontal, Vertical
 from textual.widgets.select import InvalidSelectValueError
@@ -17,10 +18,12 @@ import shutil
 import logging
 
 from serialterminal import __version__
-from serialterminal.ui.widgets.log_panel import MultiFormatLog
+from serialterminal.ui.widgets.log_panel import MultiFormatLog, DEFAULT_LOG_COLORS, KINDS
+from serialterminal.ui.widgets.settings_screen import SettingsScreen
 from serialterminal.ui.widgets.serial_bar import SerialBar
 from serialterminal.ui.widgets.dynamic_control_buttons import (
-    DynamicControlButtons, RESERVED_IDS, _widget_id,
+    REPEAT_MARKER_CHOICES, ControlButton, DynamicControlButtons, RESERVED_IDS, _widget_id,
+    repeat_marker,
 )
 from serialterminal.ui.widgets.button_editor import ButtonEditor
 from serialterminal.ui.widgets.quick_send import QuickSend
@@ -37,12 +40,29 @@ from serialterminal.utils.docklight_interpreter import DocklightConfigInterprete
 from serialterminal.utils.formatting import timestamp
 from serialterminal.utils.payload import build_frame
 from serialterminal.utils.session_capture import SessionCapture
+from serialterminal.utils.places import Places
 
 log = logging.getLogger("serialterminal.app")
 
 
 class _UnreadableConfig(Exception):
     """project.yml exists but cannot be used as a config."""
+
+
+class SerialData(Message):
+    """A received frame, posted from the receive thread."""
+
+    def __init__(self, data: bytes):
+        super().__init__()
+        self.data = data
+
+
+class SerialPortLost(Message):
+    """The port failed under us, posted from the receive thread."""
+
+    def __init__(self, reason: str):
+        super().__init__()
+        self.reason = reason
 
 
 def connection_hint(error: Exception, platform: str = None) -> str | None:
@@ -99,6 +119,7 @@ class TUIApp(App):
         Binding("ctrl+b", "toggle_pause", "pause", show=True, tooltip="Pause / resume the log view"),
         Binding("ctrl+s", "toggle_capture", "record", show=True, tooltip="Record the session to a file"),
         Binding("ctrl+w", "clearlog_message", "clear", show=True, tooltip="Clear the log"),
+        Binding("f2", "settings", "settings", show=True, tooltip="Theme and log colors"),
         Binding("ctrl+o", "edit_config", "edit", show=True, tooltip="Edit project.yml"),
         Binding("ctrl+l", "reload_config", "reload", show=True, tooltip="Reload project.yml"),
         # Not Ctrl+I alone: terminals send Ctrl+I and Tab as the same byte
@@ -139,8 +160,11 @@ class TUIApp(App):
         self.serial_conn = SerialConnection()
         self.receiver = SerialReceiver(
             self.serial_conn,
-            self._on_frame_received_threadsafe
+            self._on_frame_received_threadsafe,
+            on_lost=self._on_port_lost_threadsafe,
         )
+        # Settings the open port was opened with; None while disconnected.
+        self._active_line = None
         
         self.repeating_buttons = {}
         self.capture = SessionCapture()
@@ -150,6 +174,8 @@ class TUIApp(App):
         # Load user settings first (theme, preferences)
         self.settings = {}
         self.load_settings()
+        # Recent files and favourites for the file dialogs, kept in settings.yml.
+        self.places = Places(self.settings, self._save_settings_or_warn)
         
         # Load working config (serial, buttons, sequences)
         self.config = {}
@@ -168,7 +194,8 @@ class TUIApp(App):
             with Vertical(id="log-column"):
                 yield MultiFormatLog()
                 yield QuickSend()
-            yield DynamicControlButtons(config_data=self.config.get('buttons', []))
+            yield DynamicControlButtons(config_data=self.config.get('buttons', []),
+                                        repeat_marker=self.repeat_marker())
         footer = Footer()
         footer.compact = True  # an attribute, not a constructor argument, in Textual 4.0
         yield footer
@@ -176,6 +203,11 @@ class TUIApp(App):
     def on_mount(self):
         """Initialize UI components on mount."""
         self._app_thread_id = threading.get_ident()
+        self.set_interval(0.5, self._check_connection)
+        self._apply_log_colors()
+        # Theme colours change with the theme - including a change made from
+        # the command palette - so recolour the log whenever it changes.
+        self.theme_changed_signal.subscribe(self, lambda theme: self._apply_log_colors())
         self.refresh_serial_ports()
         self._apply_serial_config_to_ui()
         self._report_config_problems()
@@ -287,8 +319,9 @@ class TUIApp(App):
             log.error("Error loading settings: %s", e)
             self.settings = {'ui': {'theme': 'nord'}, 'config': {'last_used': None}}
 
-    def save_settings(self):
-        """Save user settings"""
+    def save_settings(self) -> bool:
+        """Save user settings (settings.yml). Returns True if written."""
+        self.last_settings_error = None
         try:
             # Update theme
             if 'ui' not in self.settings:
@@ -297,9 +330,28 @@ class TUIApp(App):
             
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 yaml.dump(self.settings, f, default_flow_style=False)
+            return True
                 
         except Exception as e:
             log.error("Error saving settings: %s", e)
+            self.last_settings_error = str(e)
+            return False
+
+    # Settings (F2) and favourites apply at once. A change that couldn't also
+    # be written would vanish at the next start without a word, so say so.
+    def _save_settings_or_warn(self) -> bool:
+        if self.save_settings():
+            return True
+        self.notify(f"Applied, but couldn't save {self.settings_file}: "
+                    f"{self.last_settings_error}", severity="error", timeout=8)
+        return False
+
+    def _save_config_or_warn(self) -> bool:
+        if self.save_config():
+            return True
+        self.notify(f"Applied, but couldn't save {self.config_file}: "
+                    f"{self.last_save_error}", severity="error", timeout=8)
+        return False
     
     def load_config(self):
         """Load unified configuration from project.yml.
@@ -592,6 +644,7 @@ class TUIApp(App):
                 self.action_reload_config()
                 
                 self.log_message(f"Config imported from: {file_path.name}", 'info')
+                self.places.add_recent(file_path, "config")
                 
             except yaml.YAMLError as e:
                 self.log_message(f"Invalid YAML: {e}", 'error')
@@ -600,7 +653,11 @@ class TUIApp(App):
                 import traceback
                 traceback.print_exc()
         
-        self.push_screen(CompactFileOpen(".", filters=import_filters()), handle_file_open)
+        self.push_screen(
+            CompactFileOpen(self._dialog_start("config"), filters=import_filters(),
+                            places=self.places, kind="config"),
+            handle_file_open,
+        )
 
     def action_export_config(self):
         """Export current configuration to a file using file picker."""
@@ -622,6 +679,7 @@ class TUIApp(App):
                     yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
                 
                 self.log_message(f"Config exported to: {file_path.name}", 'info')
+                self.places.add_recent(file_path, "config")
                 
                 # Update last_used in settings
                 if 'config' not in self.settings:
@@ -633,7 +691,8 @@ class TUIApp(App):
                 self.log_message(f"Error exporting: {e}", 'error')
         
         # Show file picker - FileSave just takes the starting directory
-        file_save_screen = CompactFileSave(".")
+        file_save_screen = CompactFileSave(self._dialog_start("config"),
+                                           places=self.places, kind="config")
         self.push_screen(file_save_screen, handle_file_save)
 
     # ========================================================================
@@ -679,19 +738,94 @@ class TUIApp(App):
         # it survived the rescan - otherwise pressing Refresh silently loses it.
         previous = select.value
         select.set_options(port_options)
-        if previous not in (Select.BLANK, 'none'):
+        if isinstance(previous, str) and previous != 'none':
             try:
                 select.value = previous
             except InvalidSelectValueError:
                 self.log_message(f"Port {previous} is no longer available", 'error')
 
-    def _connect_serial(self):
-        """Connect to serial port using SerialConnection wrapper."""
+    def _line_settings(self) -> tuple | None:
+        """(port, baud, parity, data bits, stop bits) as the selectors show them."""
+        try:
+            return tuple(self.query_one(widget_id, Select).value for widget_id in (
+                "#serial-port-select", "#serial-baud", "#serial-parity",
+                "#serial-bits", "#serial-stop-bits"))
+        except NoMatches:
+            return None
+
+    def frame_gap(self) -> str:
+        """'auto' or a number of milliseconds, as a string - project.yml's serial.frame_gap."""
+        serial_cfg = self.config.get('serial') if isinstance(self.config.get('serial'), dict) else {}
+        gap = str(serial_cfg.get('frame_gap', 'auto')).strip()
+        return gap if gap == 'auto' or gap.isdigit() else 'auto'
+
+    def set_frame_gap(self, gap: str):
+        """Change the frame gap (Settings, F2): saved with the project, applied at once."""
+        serial_cfg = self.config.setdefault('serial', {})
+        if not isinstance(serial_cfg, dict):
+            serial_cfg = self.config['serial'] = {}
+        serial_cfg['frame_gap'] = gap if gap == 'auto' else int(gap)
+        self._save_config_or_warn()
+        if self.serial_conn.connected:
+            self._apply_frame_gap()
+
+    def _apply_frame_gap(self, baud_rate: int | None = None):
+        """Frame received bytes with the configured gap."""
+        gap = self.frame_gap()
+        if gap == "auto":
+            if baud_rate is None:
+                try:
+                    baud_rate = int(self.query_one("#serial-baud", Select).value)
+                except (NoMatches, ValueError):
+                    baud_rate = 9600
+            self.receiver.set_baud_rate(baud_rate)
+        else:
+            self.receiver.set_timeout(int(gap) / 1000)
+
+    def _ensure_connected(self) -> bool:
+        """Connect with the current settings if needed, before a send.
+
+        Sending while disconnected used to just log an error; now it connects
+        first, so pressing a button or Enter is enough.
+        """
+        if self.serial_conn.connected:
+            return True
+        if self._connect_serial():
+            return True
+        self.log_message("Not connected - nothing sent", 'error')
+        return False
+
+    def on_select_changed(self, event: Select.Changed):
+        select_id = event.select.id
+        if select_id not in ("serial-port-select", "serial-baud", "serial-parity",
+                             "serial-bits", "serial-stop-bits"):
+            return
+        # Compare what the selectors show with what the open port uses, rather
+        # than reacting to every Changed event: restoring settings and Refresh
+        # set values programmatically, and only a real difference matters.
+        active = self._active_line
+        if not self.serial_conn.connected or active is None:
+            return
+        current = self._line_settings()
+        if current is None or current == active:
+            return
+        if current[0] != active[0]:
+            self._disconnect_serial(
+                f"Disconnected from {active[0]}: port changed to {current[0]}. "
+                f"The next send connects to it.")
+        else:
+            self._disconnect_serial(
+                f"Disconnected from {active[0]}: line settings changed. "
+                f"The next send reconnects with them.")
+
+    def _connect_serial(self) -> bool:
+        """Connect to serial port using SerialConnection wrapper. Returns True on success."""
+        port = "the port"
         try:
             port = self.query_one("#serial-port-select", Select).value
-            if port in ("none", Select.BLANK):
+            if not isinstance(port, str) or port == "none":
                 self.log_message("No serial port selected", 'error')
-                return
+                return False
 
             baud_rate = int(self.query_one("#serial-baud", Select).value)
             parity_val = self.query_one("#serial-parity", Select).value
@@ -729,14 +863,15 @@ class TUIApp(App):
             self._set_serial_status(True)
             self.query_one("#serial-connect", Button).disabled = True
             self.query_one("#serial-disconnect", Button).disabled = False
+            self._active_line = (port, str(baud_rate), parity_val, bits_val, stop_val)
 
-            # Frame RX by the actual baud rate (Modbus/ASCII gap detection)
-            self.receiver.set_baud_rate(baud_rate)
+            self._apply_frame_gap(baud_rate)
             self.receiver.start()
 
             self.log_message(f"Connected to {port} at {baud_rate} baud")
 
             self.config["serial"] = {
+                **(self.config.get("serial") if isinstance(self.config.get("serial"), dict) else {}),
                 "port": port,
                 "baud_rate": baud_rate,
                 "parity": parity_val,
@@ -744,18 +879,17 @@ class TUIApp(App):
                 "stop_bits": stop_val,
             }
             self.save_config()
+            return True
 
         except ValueError as e:
             self.log_message(f"Invalid configuration value: {e}", 'error')
         except serial.SerialException as e:
-            self.log_message(f"Error connecting to serial: {e}", 'error')
-            hint = connection_hint(e)
-            if hint:
-                self.log_message(hint, 'error')
+            self.com_error(f"Error: couldn't open {port}", str(e), connection_hint(e))
         except Exception as e:
-            self.log_message(f"Unexpected error: {e}", 'error')
+            self.com_error(f"Error: couldn't open {port}", f"{type(e).__name__}: {e}")
+        return False
 
-    def _disconnect_serial(self):
+    def _disconnect_serial(self, message: str | None = "Serial disconnected", type: str = 'info'):
         """Disconnect from serial port."""
         self._stop_all_repeating_buttons()
         # stop() returns bytes that arrived but never completed a frame; log
@@ -764,13 +898,47 @@ class TUIApp(App):
         if tail:
             self._on_frame_received(tail)
         self.serial_conn.disconnect()
-        connect_btn = self.query_one("#serial-connect", Button)
-        disconnect_btn = self.query_one("#serial-disconnect", Button)
-        connect_btn.disabled = False
-        disconnect_btn.disabled = True
+        self._active_line = None
+        try:
+            self.query_one("#serial-connect", Button).disabled = False
+            self.query_one("#serial-disconnect", Button).disabled = True
+        except NoMatches:
+            pass
 
         self._set_serial_status(False)
-        self.log_message("Serial disconnected")
+        if message:
+            self.log_message(message, type)
+
+    def _on_port_lost_threadsafe(self, reason: str):
+        """Called on the receive thread when the port fails under us.
+
+        Posted rather than called through call_from_thread, for the same reason
+        as frames: the cleanup joins the receive thread, so it must not be
+        waiting on us (see _on_frame_received_threadsafe).
+        """
+        self.post_message(SerialPortLost(reason))
+
+    def on_serial_port_lost(self, message: SerialPortLost):
+        self._on_port_lost(message.reason)
+
+    def _check_connection(self):
+        """Safety net, twice a second: never show Connected for a port that's gone.
+
+        The receive thread normally reports a loss at once; this catches any
+        path that doesn't, so the status can't stay stuck on Connected.
+        """
+        if self._active_line is not None and not self.serial_conn.connected:
+            self._on_port_lost(getattr(self.serial_conn, "lost_reason", None)
+                               or "connection lost")
+
+    def _on_port_lost(self, reason: str):
+        """The device went away (unplugged, reset): say so once and reset the UI."""
+        if self._active_line is None:
+            return  # already disconnected on purpose
+        port = self._active_line[0]
+        self._disconnect_serial(None)
+        self.com_error(f"Error: connection to {port} lost", reason,
+                       "The device was unplugged or reset; the next send reconnects.")
 
     def _set_serial_status(self, connected: bool):
         """Reflect the connection state on the status indicator."""
@@ -794,8 +962,7 @@ class TUIApp(App):
     def _send_command(self, frame, format_override: str = None, comment: str = '',
                       checksum: str = 'none', line_ending: str = 'none') -> bool:
         """Send a command frame over serial. Returns True if it was sent."""
-        if not self.serial_conn.connected:
-            self.log_message("Not connected to serial port", 'error')
+        if not self._ensure_connected():
             return False
 
         if format_override:
@@ -817,9 +984,10 @@ class TUIApp(App):
             # a successful [TX] and clear the quick-send box.
             written = self.serial_conn.write(frameData)
             if not written:
-                self.log_message(
-                    "Send failed - the port did not accept the data "
-                    "(unplugged? see serialterminal.log)", 'error')
+                self.com_error("Error: send failed",
+                               getattr(self.serial_conn, "last_error", None)
+                               or "the port did not accept the data",
+                               "Unplugged? The next send reconnects.")
                 return False
             self.log_message(frameData, 'tx')
             return True
@@ -866,23 +1034,34 @@ class TUIApp(App):
         try:
             response_bytes = sequence.get_response_bytes()
             if response_bytes:
-                self.serial_conn.write(response_bytes)
+                # Same rule as a normal send: [TX] only for bytes that left.
+                if not self.serial_conn.write(response_bytes):
+                    self.com_error(f"Error: auto-reply '{sequence.name}' not sent",
+                                   getattr(self.serial_conn, "last_error", None)
+                                   or "the port did not accept the data")
+                    return
                 self.log_message(response_bytes, 'tx')
                 self.log_message(f"Sequence: {sequence.name}", 'info')
         except Exception as e:
-            self.log_message(f"Error sending sequence response: {e}", 'error')
+            self.com_error(f"Error: auto-reply '{sequence.name}' not sent",
+                           f"{type(e).__name__}: {e}")
 
     def _on_frame_received_threadsafe(self, frame_bytes: bytes):
         """Hand a frame to the UI thread from the receive thread.
 
-        call_from_thread refuses to run on the app's own thread, so fall back to
-        a direct call when we are already there. Without this any future caller
-        on the UI thread loses the frame to a swallowed RuntimeError.
+        Posted, not call_from_thread: that blocks the receive thread until the
+        UI has handled the frame, and the UI, when disconnecting, waits for the
+        receive thread to finish - each waited on the other until a 2 s join
+        timeout broke the deadlock, freezing the app with Connected still shown.
+        post_message is thread-safe and returns at once; frames keep their order.
         """
         if threading.get_ident() == self._app_thread_id:
             self._on_frame_received(frame_bytes)
         else:
-            self.call_from_thread(self._on_frame_received, frame_bytes)
+            self.post_message(SerialData(frame_bytes))
+
+    def on_serial_data(self, message: SerialData):
+        self._on_frame_received(message.data)
 
     # ========================================================================
     # BUTTON EVENT HANDLERS
@@ -903,23 +1082,22 @@ class TUIApp(App):
         elif hasattr(event.button, 'message') and hasattr(event.button, 'format'):
             message = event.button.message
             format_type = event.button.format
-            label = event.button.label
+            label = getattr(event.button, 'plain_label', str(event.button.label))
             repeat = getattr(event.button, 'repeat', None)
             extras = {
                 'checksum': getattr(event.button, 'checksum', 'none'),
                 'line_ending': getattr(event.button, 'line_ending', 'none'),
             }
 
-            if self.serial_conn.connected:
-                # Check if this is a repeating button (repeat > 0)
-                if repeat is not None and repeat > 0:
-                    # This is a repeating button
-                    self._toggle_repeat_button(event.button, message, format_type, repeat, **extras)
-                else:
-                    # Regular one-shot button - use format override
-                    self._send_command(message, format_override=format_type, comment=label, **extras)
+            if not self._ensure_connected():
+                return
+            # Check if this is a repeating button (repeat > 0)
+            if repeat is not None and repeat > 0:
+                # This is a repeating button
+                self._toggle_repeat_button(event.button, message, format_type, repeat, **extras)
             else:
-                self.log_message("Not connected to serial port", 'error')
+                # Regular one-shot button - use format override
+                self._send_command(message, format_override=format_type, comment=label, **extras)
 
     def on_input_submitted(self, event: Input.Submitted):
         """Handle quick send input submission."""
@@ -935,21 +1113,29 @@ class TUIApp(App):
                               checksum: str = 'none', line_ending: str = 'none'):
         """Toggle a repeating button on/off."""
         button_id = button.id
+        label = getattr(button, 'plain_label', str(button.label))
         
         if interval_ms <= 0:
-            self.log_message(f"Cannot repeat {button.label}: invalid interval", 'error')
+            self.log_message(f"Cannot repeat {label}: invalid interval", 'error')
             return
         
         if button_id in self.repeating_buttons:
             # Button is currently repeating - stop it
             self._stop_repeating_button(button_id)
-            button.remove_class("button-repeating")
-            self.log_message(f"Stopped repeating: {button.label}")
+            self._show_running(button, False)
+            self.log_message(f"Stopped repeating: {label}")
         else:
             # Start repeating
             self._start_repeating_button(button_id, button, message, format_type, interval_ms,
                                          checksum=checksum, line_ending=line_ending)
-            button.add_class("button-repeating")
+            self._show_running(button, True)
+
+    @staticmethod
+    def _show_running(button: Button, running: bool):
+        if isinstance(button, ControlButton):
+            button.set_running(running)  # also recolours the repeat marker
+        else:
+            button.set_class(running, "button-repeating")
 
     def _start_repeating_button(self, button_id: str, button: Button, message: str, format_type: str,
                                 interval_ms: int, checksum: str = 'none', line_ending: str = 'none'):
@@ -958,11 +1144,12 @@ class TUIApp(App):
         self._send_command(message, format_override=format_type, comment="", **extras)
 
         interval_s = interval_ms / 1000.0
+        label = getattr(button, 'plain_label', str(button.label))
 
         timer = self.set_interval(
             interval_s,
             lambda: self._send_command(message, format_override=format_type,
-                                       comment=f"{button.label} (repeat)", **extras),
+                                       comment=f"{label} (repeat)", **extras),
             name=f"repeat_{button_id}"
         )
         
@@ -977,15 +1164,18 @@ class TUIApp(App):
     
     def _stop_all_repeating_buttons(self):
         """Stop all repeating buttons (called on disconnect)."""
+        # Checked before the loop empties it: checked after, as it was, the
+        # message never showed.
+        any_running = bool(self.repeating_buttons)
         for button_id in list(self.repeating_buttons.keys()):
             try:
-                self.query_one(f"#{button_id}", Button).remove_class("button-repeating")
+                self._show_running(self.query_one(f"#{button_id}", Button), False)
             except NoMatches:
                 # Button already recomposed away; the timer still needs stopping.
                 pass
             self._stop_repeating_button(button_id)
         
-        if self.repeating_buttons:
+        if any_running:
             self.log_message("Stopped all repeating buttons")
 
     # ========================================================================
@@ -1044,9 +1234,15 @@ class TUIApp(App):
 
         default = datetime.now().strftime("session-%Y%m%d-%H%M%S.log")
         self.push_screen(
-            CompactFileSave(".", title="Record session to", default_file=default),
+            CompactFileSave(self._dialog_start("capture"), title="Record session to",
+                            default_file=default, places=self.places, kind="capture"),
             handle_file_save,
         )
+
+    def _dialog_start(self, kind: str) -> str:
+        """Open file dialogs where the last file of this kind was, not always in '.'."""
+        recent = self.places.recent(kind)
+        return str(Path(recent[0]).parent) if recent else "."
 
     def start_capture(self, path) -> bool:
         """Begin appending every log entry to `path`."""
@@ -1057,6 +1253,7 @@ class TUIApp(App):
             return False
         self.query_one(MultiFormatLog).set_recording(self.capture.path.name)
         self.log_message(f"Recording session to {self.capture.path}", 'info')
+        self.places.add_recent(self.capture.path, "capture")
         return True
 
     def _stop_capture(self, reason: str = None):
@@ -1129,7 +1326,7 @@ class TUIApp(App):
         for button in self.query(".control-button"):
             if getattr(button, 'source_index', None) == index and button.id in self.repeating_buttons:
                 self._stop_repeating_button(button.id)
-                button.remove_class("button-repeating")
+                self._show_running(button, False)
 
     async def save_button(self, index: int | None, entry: dict) -> int:
         """Write a button from the editor into project.yml and show it.
@@ -1180,15 +1377,91 @@ class TUIApp(App):
         highlight restored on the rebuilt widgets.
         """
         panel = self.query_one(DynamicControlButtons)
+        panel.repeat_marker = self.repeat_marker()
         await panel.rebuild(self.config.get('buttons', []))
         self.sequence_handler = self._build_sequence_handler()
         for button_id in list(self.repeating_buttons):
             try:
-                self.query_one(f"#{button_id}", Button).add_class("button-repeating")
+                self._show_running(self.query_one(f"#{button_id}", Button), True)
             except NoMatches:
                 self._stop_repeating_button(button_id)
         for problem in panel.problems:
             self.log_message(problem, 'error')
+
+    # ========================================================================
+    # SETTINGS (F2)
+    # ========================================================================
+
+    def action_settings(self):
+        self.push_screen(SettingsScreen())
+
+    def verbose_errors(self) -> bool:
+        return self.settings.get('verbose_errors') is True
+
+    def set_verbose_errors(self, on: bool):
+        self.settings['verbose_errors'] = bool(on)
+        self._save_settings_or_warn()
+
+    def com_error(self, short: str, detail: str | None = None, hint: str | None = None):
+        """Report a serial-port problem.
+
+        A short line by default ("Error: couldn't open COM4"); with Verbose
+        errors on (Settings, F2) also the system's message and a hint. The
+        detail always goes to serialterminal.log.
+        """
+        if detail:
+            log.error("%s: %s", short, detail)
+        else:
+            log.error("%s", short)
+        if self.verbose_errors() and detail:
+            self.log_message(f"{short}: {detail}", 'error')
+            if hint:
+                self.log_message(hint, 'error')
+        else:
+            self.log_message(short, 'error')
+
+    def log_colors(self) -> dict:
+        """Colour per log kind: settings.yml's log_colors over the defaults."""
+        configured = self.settings.get('log_colors')
+        configured = configured if isinstance(configured, dict) else {}
+        return {kind: str(configured.get(kind) or DEFAULT_LOG_COLORS[kind]) for kind in KINDS}
+
+    def _apply_log_colors(self):
+        try:
+            self.query_one(MultiFormatLog).apply_colors(self.log_colors())
+        except NoMatches:
+            pass
+
+    def set_log_color(self, kind: str, value: str):
+        colors = self.settings.get('log_colors')
+        if not isinstance(colors, dict):
+            colors = self.settings['log_colors'] = {}
+        colors[kind] = value
+        self._save_settings_or_warn()
+        self._apply_log_colors()
+
+    def reset_log_colors(self):
+        self.settings.pop('log_colors', None)
+        self._save_settings_or_warn()
+        self._apply_log_colors()
+
+    def set_theme(self, theme: str):
+        self.theme = theme  # recolours the log via theme_changed_signal
+        self._save_settings_or_warn()
+
+    def repeat_marker_choice(self) -> str:
+        """settings.yml's repeat_marker: auto (default), symbol (↻) or text ([R])."""
+        choice = self.settings.get('repeat_marker')
+        return choice if choice in REPEAT_MARKER_CHOICES else 'auto'
+
+    def repeat_marker(self) -> str:
+        """The marker shown on buttons that resend on a timer."""
+        return repeat_marker(self.repeat_marker_choice())
+
+    async def set_repeat_marker(self, choice: str):
+        self.settings['repeat_marker'] = choice
+        self._save_settings_or_warn()
+        await self._refresh_buttons_and_sequences()
 
     async def action_reload_css(self) -> None:
         """Re-read styles.tcss without restarting (Ctrl+R).

@@ -73,9 +73,9 @@ class TestTimeoutCalculation:
             FakeSerialConnection(), lambda f: None, message_timeout=0.5
         )
         assert receiver.auto_timeout is False
-        receiver.set_baud_rate(1200)
+        receiver.set_baud_rate(300)  # 3 character times = 100 ms, above the floor
         assert receiver.auto_timeout is True
-        assert receiver.message_timeout == pytest.approx(0.025, rel=1e-3)
+        assert receiver.message_timeout == pytest.approx(0.100, rel=1e-3)
 
     def test_set_timeout_manual_override(self):
         receiver = SerialReceiver(FakeSerialConnection(), lambda f: None)

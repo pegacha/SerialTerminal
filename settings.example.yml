@@ -5,3 +5,18 @@ ui:
 config:
   # Path of the last config imported/exported via Ctrl+I / Ctrl+E.
   last_used: null
+# Serial-port errors: false = one short line, true = also the system message
+# and a hint. Settings (F2) changes this.
+verbose_errors: false
+# Marker on buttons that repeat on a timer: auto, symbol (↻) or text ([R]).
+# Auto picks [R] in terminals that can't draw ↻. Settings (F2) changes this.
+repeat_marker: auto
+# Optional per-kind log colors, also set from Settings (F2). Theme colors
+# ($primary, $success, $warning, $error, $accent, $foreground-muted, ...) follow
+# the theme; #RRGGBB is fixed.
+# log_colors:
+#   tx: $primary
+#   rx: $success
+#   system: $foreground-muted
+#   error: $error
+#   sequence: $warning

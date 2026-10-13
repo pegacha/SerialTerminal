@@ -21,6 +21,62 @@ log = logging.getLogger("serialterminal.logpanel")
 # Entries kept per tab for re-filtering and for redrawing after a pause.
 HISTORY_LIMIT = 20_000
 
+# What a log entry is, for colouring: sent, received, the app's own messages,
+# errors, and automatic sequence replies.
+KINDS = ("tx", "rx", "system", "error", "sequence")
+
+# Theme roles rather than fixed colours, so the log stays readable in light
+# and dark themes and follows a theme change. Overridable in settings.yml
+# (log_colors) and the Settings screen (F2).
+DEFAULT_LOG_COLORS = {
+    "tx": "$primary",
+    "rx": "$success",
+    "system": "$foreground-muted",
+    "error": "$error",
+    "sequence": "$warning",
+}
+
+# log_message's `type` -> kind
+_TYPE_KINDS = {"tx": "tx", "rx": "rx", "error": "error", "seq_comment": "sequence"}
+
+
+def kind_for_type(type: str) -> str:
+    return _TYPE_KINDS.get(type, "system")
+
+
+def resolve_color(value, theme_variables: dict, background: str | None = None):
+    """A Textual Color for a configured colour: '$success', '#FF5555', 'red'...
+
+    Theme variables are looked up in `theme_variables`. A translucent result
+    ($foreground-muted is 60% foreground) is blended onto `background`, since
+    a terminal can't draw translucent text. Returns None if it can't be parsed.
+    """
+    from textual.color import Color
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.startswith("$"):
+        text = theme_variables.get(text[1:])
+        if text is None:
+            return None
+    try:
+        color = Color.parse(text)
+    except Exception:
+        return None
+    if color.a < 1 and background:
+        try:
+            color = Color.parse(background) + color
+        except Exception:
+            pass
+    return color
+
+
+class _Entry(str):
+    """A log entry's text, carrying its kind so a redraw can recolour it."""
+
+    kind: str = "system"
+
 
 class LogPanel(Log):
     """Individual log panel for each format.
@@ -40,25 +96,57 @@ class LogPanel(Log):
         # entry without rescanning up to HISTORY_LIMIT entries each time.
         self._match_count = 0
         self.paused = False
+        # The kind of each displayed line, parallel to Log's own line list, and
+        # the style for each kind. An entry spanning several lines (a
+        # multi-line ASCII frame) colours all of them.
+        self._line_kinds: list[str] = []
+        self._kind_styles: dict = {}
         super().__init__(**kwargs)
 
-    def write_message(self, message: str):
+    def write_message(self, message: str, kind: str = "system"):
         """Record an already-formatted entry and show it if it should be visible.
 
         Named write_message, not log: MessagePump.log is a property holding
         Textual's own logger, and overriding it with a method breaks any
         internal `self.log.debug(...)` call on this widget.
         """
+        entry = _Entry(message)
+        entry.kind = kind
         if len(self._entries) == self._entries.maxlen and self._matches(self._entries[0]):
             self._match_count -= 1  # the oldest entry is about to be evicted
-        self._entries.append(message)
-        matched = self._matches(message)
+        self._entries.append(entry)
+        matched = self._matches(entry)
         if matched:
             self._match_count += 1
         if self.paused or not matched:
             return
-        self.write_line(message)
+        self._line_kinds.extend([kind] * len(entry.splitlines()))
+        self.write_line(entry)
+        self._sync_line_kinds()
         self._scroll_to_end()
+
+    # -- colour ----------------------------------------------------------------
+
+    def _sync_line_kinds(self) -> None:
+        """Drop kinds for lines Log pruned from the top (max_lines)."""
+        excess = len(self._line_kinds) - len(self._lines)
+        if excess > 0:
+            del self._line_kinds[:excess]
+
+    def set_kind_styles(self, styles: dict) -> None:
+        """Rich styles per kind; redraws what's on screen in the new colours."""
+        self._kind_styles = dict(styles)
+        self._render_line_cache.clear()
+        self.refresh()
+
+    def _render_line_strip(self, y, rich_style):
+        # The base style for the line, applied before Log's own highlighting
+        # and before the selection, which keeps working on top of it.
+        if 0 <= y < len(self._line_kinds):
+            style = self._kind_styles.get(self._line_kinds[y])
+            if style is not None:
+                rich_style = rich_style + style
+        return super()._render_line_strip(y, rich_style)
 
     def _matches(self, entry: str) -> bool:
         if not self._filter:
@@ -83,13 +171,18 @@ class LogPanel(Log):
     def redraw(self):
         """Rebuild the view from the stored entries."""
         super().clear()
-        self.write_lines([entry for entry in self._entries if self._matches(entry)])
+        shown = [entry for entry in self._entries if self._matches(entry)]
+        self._line_kinds = [getattr(entry, "kind", "system")
+                            for entry in shown for _ in entry.splitlines()]
+        self.write_lines(shown)
+        self._sync_line_kinds()
         self._scroll_to_end()
 
     def clear(self):
         """Forget every entry, not just the visible ones."""
         self._entries.clear()
         self._match_count = 0
+        self._line_kinds = []
         return super().clear()
 
     def _scroll_to_end(self):
@@ -150,6 +243,24 @@ class MultiFormatLog(Container):
     def _panels(self):
         return list(self.query(LogPanel))
 
+    def apply_colors(self, colors: dict) -> None:
+        """Colour each kind of entry; `colors` maps kind -> colour (see DEFAULT_LOG_COLORS).
+
+        Unknown or unparseable values fall back to the default for that kind.
+        """
+        from rich.style import Style
+
+        variables = self.app.get_css_variables()
+        background = variables.get("background")
+        styles = {}
+        for kind in KINDS:
+            color = (resolve_color(colors.get(kind), variables, background)
+                     or resolve_color(DEFAULT_LOG_COLORS[kind], variables, background))
+            if color is not None:
+                styles[kind] = Style(color=color.rich_color)
+        for panel in self._panels():
+            panel.set_kind_styles(styles)
+
     def log_message(self, message, type: str = '', stamp: str = None):
         """
         Log a message to all format tabs.
@@ -172,6 +283,7 @@ class MultiFormatLog(Container):
         # datetime.now() itself, so the same frame was stamped four times and
         # the tabs disagreed about when it arrived.
         stamp = stamp if stamp is not None else timestamp()
+        kind = kind_for_type(type)
 
         try:
             # For TX/RX messages, format in all encoding types
@@ -188,20 +300,20 @@ class MultiFormatLog(Container):
                 dec_msg = self._add_prefix_after_timestamp(dec_msg, type_prefix)
                 bin_msg = self._add_prefix_after_timestamp(bin_msg, type_prefix)
 
-                self.query_one("#tab-ascii LogPanel").write_message(ascii_msg)
-                self.query_one("#tab-hex LogPanel").write_message(hex_msg)
-                self.query_one("#tab-decimal LogPanel").write_message(dec_msg)
-                self.query_one("#tab-binary LogPanel").write_message(bin_msg)
+                self.query_one("#tab-ascii LogPanel").write_message(ascii_msg, kind)
+                self.query_one("#tab-hex LogPanel").write_message(hex_msg, kind)
+                self.query_one("#tab-decimal LogPanel").write_message(dec_msg, kind)
+                self.query_one("#tab-binary LogPanel").write_message(bin_msg, kind)
 
             elif type == 'seq_comment':
                 # Sequence comments always display as plain text in all tabs
                 formatted = format_log_message(message, stamp)
                 formatted = self._add_prefix_after_timestamp(formatted, type_prefix)
 
-                self.query_one("#tab-ascii LogPanel").write_message(formatted)
-                self.query_one("#tab-hex LogPanel").write_message(formatted)
-                self.query_one("#tab-decimal LogPanel").write_message(formatted)
-                self.query_one("#tab-binary LogPanel").write_message(formatted)
+                self.query_one("#tab-ascii LogPanel").write_message(formatted, kind)
+                self.query_one("#tab-hex LogPanel").write_message(formatted, kind)
+                self.query_one("#tab-decimal LogPanel").write_message(formatted, kind)
+                self.query_one("#tab-binary LogPanel").write_message(formatted, kind)
 
             else:
                 # Non TX/RX messages (errors, info, etc.) only go to ASCII tab
@@ -209,10 +321,10 @@ class MultiFormatLog(Container):
                 full_message = f"{type_prefix}{message}" if isinstance(message, str) else message
                 formatted = format_log_message(full_message, stamp)
 
-                self.query_one("#tab-ascii LogPanel").write_message(formatted)
-                self.query_one("#tab-hex LogPanel").write_message(formatted)
-                self.query_one("#tab-decimal LogPanel").write_message(formatted)
-                self.query_one("#tab-binary LogPanel").write_message(formatted)
+                self.query_one("#tab-ascii LogPanel").write_message(formatted, kind)
+                self.query_one("#tab-hex LogPanel").write_message(formatted, kind)
+                self.query_one("#tab-decimal LogPanel").write_message(formatted, kind)
+                self.query_one("#tab-binary LogPanel").write_message(formatted, kind)
 
         except Exception as e:
             # Fallback logging

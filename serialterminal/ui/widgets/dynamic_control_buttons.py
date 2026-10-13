@@ -1,12 +1,15 @@
 from textual import events
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
 from textual.containers import Container, Horizontal, ItemGrid
 from pathlib import Path
 import logging
+import os
 import re
+import sys
 import yaml
 
 log = logging.getLogger("serialterminal.buttons")
@@ -30,6 +33,62 @@ RESERVED_IDS = frozenset({
 })
 
 _NOT_ID_CHAR = re.compile(r"[^A-Za-z0-9_-]")
+
+# Marks buttons that resend on a timer. Settings (F2) picks "symbol", "text"
+# or "auto" (the default).
+REPEAT_SYMBOL = "↻"  # ↻
+REPEAT_TEXT = "[R]"
+REPEAT_MARKER_CHOICES = ("auto", "symbol", "text")
+
+
+def terminal_draws_symbol(environ=None, platform: str | None = None) -> bool:
+    """Best guess at whether this terminal can draw REPEAT_SYMBOL.
+
+    A terminal can't be asked whether its font has a glyph. ↻ is not in
+    Consolas or Cascadia Mono, so on Windows it shows only where the terminal
+    borrows it from a fallback font: Windows Terminal (WT_SESSION) and
+    VS Code, WezTerm and the like (TERM_PROGRAM) do; the old console host
+    draws a box. macOS and Linux terminals fall back too - except the Linux
+    text console, whose VGA font has no arrows.
+    """
+    environ = os.environ if environ is None else environ
+    platform = sys.platform if platform is None else platform
+    if environ.get("TERM") == "linux":
+        return False
+    if platform == "win32":
+        return bool(environ.get("WT_SESSION") or environ.get("TERM_PROGRAM"))
+    return True
+
+
+def repeat_marker(choice, environ=None, platform: str | None = None) -> str:
+    """The marker text for a REPEAT_MARKER_CHOICES value."""
+    if choice == "symbol":
+        return REPEAT_SYMBOL
+    if choice == "text":
+        return REPEAT_TEXT
+    return REPEAT_SYMBOL if terminal_draws_symbol(environ, platform) else REPEAT_TEXT
+
+
+def is_repeating(btn_config: dict) -> bool:
+    """True for a button that resends on a timer (repeat > 0), as the app sends it."""
+    repeat = btn_config.get('repeat')
+    return (isinstance(repeat, (int, float)) and not isinstance(repeat, bool)
+            and repeat > 0)
+
+
+def button_label(label: str, marker: str | None = None, running: bool = False) -> Content:
+    """A button's label, led by the repeat marker in its own colour.
+
+    The marker goes first so an ellipsised long label can't cut it off. It is
+    $text-accent - the accent made legible as text, which out-contrasts plain
+    $accent on the button in every built-in theme. While the repeat runs the
+    button turns $accent, so the marker then takes the label's colour instead
+    of vanishing into the background.
+    """
+    text = Content(label)  # literal: a "[" in a label is not markup
+    if not marker:
+        return text
+    return Content.assemble((marker, "bold" if running else "bold $text-accent"), " ", text)
 
 
 def _widget_id(raw, index: int) -> str:
@@ -110,9 +169,20 @@ class ControlButton(Button):
     the editor writes back to the right entry even when ids were repaired.
     """
 
-    def __init__(self, *args, source_index: int, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, label: str, *args, source_index: int, marker: str | None = None,
+                 **kwargs):
+        super().__init__(button_label(label, marker), *args, **kwargs)
         self.source_index = source_index
+        self.plain_label = label  # for the log; `label` carries the marker
+        self.marker = marker
+
+    def set_running(self, running: bool) -> None:
+        """Show whether this button's repeat is running."""
+        self.set_class(running, "button-repeating")
+        # Not `self.label = ...`: Content compares by text alone, so the
+        # reactive saw an unchanged label and kept the old marker colour.
+        self.set_reactive(Button.label, button_label(self.plain_label, self.marker, running))
+        self.refresh()
 
     async def _on_click(self, event: events.Click) -> None:
         if event.button == 3:
@@ -136,15 +206,18 @@ class DynamicControlButtons(Container):
             super().__init__()
             self.index = index
 
-    def __init__(self, config_file: str = None, config_data: list = None, **kwargs):
+    def __init__(self, config_file: str = None, config_data: list = None,
+                 repeat_marker: str = REPEAT_SYMBOL, **kwargs):
         """
         Initialize DynamicControlButtons.
         
         Args:
             config_file: Path to YAML file (legacy support)
             config_data: List of button dictionaries from unified config
+            repeat_marker: Shown on buttons that resend on a timer
         """
         super().__init__(**kwargs)
+        self.repeat_marker = repeat_marker
         self.id = "control-buttons"
         self.border_title = "Control Buttons"
         self.config_file = Path(config_file) if config_file else None
@@ -234,14 +307,22 @@ class DynamicControlButtons(Container):
         # e.g. "LIGHT RELAY ON" and "LIGHT RELAY OFF" looked identical. ItemGrid
         # wraps; columns are sized to the longest label (capped) so every
         # label shows in full.
-        longest = max(len(str(b.get('label', 'Button'))) for b in self.buttons_config)
+        def marker_for(btn_config):
+            return self.repeat_marker if is_repeating(btn_config) else None
+
+        def shown_width(btn_config):
+            marker = marker_for(btn_config)
+            label = str(btn_config.get('label', 'Button'))
+            return len(label) + (len(marker) + 1 if marker else 0)
+
+        longest = max(shown_width(b) for b in self.buttons_config)
         with ItemGrid(id="buttons-container",
                       min_column_width=min(longest + 4, MAX_COLUMN_WIDTH)):
             for btn_config, source_index in zip(self.buttons_config, self.source_indices):
                 button_id = btn_config['id']  # always legal and unique after normalising
                 label = str(btn_config.get('label', 'Button'))
                 tooltip = btn_config.get('tooltip', '')
-                if not tooltip and len(label) + 4 > MAX_COLUMN_WIDTH:
+                if not tooltip and shown_width(btn_config) + 4 > MAX_COLUMN_WIDTH:
                     tooltip = label  # it may be ellipsised; hover shows it whole
 
                 button = ControlButton(
@@ -251,6 +332,7 @@ class DynamicControlButtons(Container):
                     tooltip=tooltip if tooltip else None,
                     compact=True,
                     source_index=source_index,
+                    marker=marker_for(btn_config),
                 )
                 # Store message and format as attributes
                 button.message = btn_config.get('message', '')

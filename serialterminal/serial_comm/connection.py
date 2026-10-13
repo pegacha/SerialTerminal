@@ -12,6 +12,12 @@ class SerialConnection:
     def __init__(self):
         self.connection: Optional[serial.Serial] = None
         self.connected = False
+        # Why the port failed under us (unplugged, device reset), or None. Set
+        # rather than raised so the receive thread can stop cleanly and the
+        # app can report it once.
+        self.lost_reason: Optional[str] = None
+        # The most recent read/write failure, for an error message that says why.
+        self.last_error: Optional[str] = None
 
     @staticmethod
     def list_ports():
@@ -35,6 +41,7 @@ class SerialConnection:
         # Reset state up front so a failed attempt can't look connected.
         self.connected = False
         self.connection = None
+        self.lost_reason = None
 
         # CRITICAL: timeout must be small (non-blocking) for receiver to work
         self.connection = serial.Serial(
@@ -71,41 +78,67 @@ class SerialConnection:
         Returns:
             Bytes read from serial port, or empty bytes if nothing available
         """
-        if not self.connected or not self.connection:
+        handle = self.connection
+        if not self.connected or handle is None:
             return b''
 
         try:
             # Check how many bytes are waiting
-            waiting = self.connection.in_waiting
+            waiting = handle.in_waiting
 
             if waiting > 0:
                 # Read all available bytes (up to 'size')
-                data = self.connection.read(min(waiting, size))
+                data = handle.read(min(waiting, size))
                 log.debug("read %d bytes: %r", len(data), data)
                 return data
 
             # No data available
             return b''
 
-        except Exception as e:
-            log.exception("read error: %s", e)
+        except (serial.SerialException, OSError) as e:
+            # The device is gone: "ClearCommError failed ... Access is denied"
+            # on Windows, EIO or "device reports readiness to read but returned
+            # no data" on Linux. No retry can succeed. This used to log a full
+            # traceback and retry ~1000 times a second, flooding the log, while
+            # the app still showed Connected.
+            self._lose(e)
             return b''
 
     def write(self, data: bytes) -> int:
         """Write data to serial port."""
-        if not self.connected or not self.connection:
+        handle = self.connection
+        if not self.connected or handle is None:
             log.warning("write called while not connected")
             return 0
 
         try:
-            written = self.connection.write(data)
-            self.connection.flush()  # Ensure data is sent immediately
+            written = handle.write(data)
+            handle.flush()  # Ensure data is sent immediately
             log.debug("wrote %d bytes: %r", written, data)
             return written
 
-        except Exception as e:
-            log.exception("write error: %s", e)
+        except serial.SerialTimeoutException as e:
+            # The port is fine but not draining (flow control, device busy).
+            log.error("write timed out: %s", e)
+            self.last_error = f"write timed out ({e})"
             return 0
+        except (serial.SerialException, OSError) as e:
+            self._lose(e)
+            return 0
+
+    def _lose(self, error: Exception):
+        """The port failed under us: stop using it, close it, remember why."""
+        if self.lost_reason is None:
+            self.lost_reason = str(error) or type(error).__name__
+            log.error("port lost: %s", self.lost_reason)
+        self.last_error = self.lost_reason
+        self.connected = False
+        handle, self.connection = self.connection, None
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                pass
 
     def flush_input(self):
         """Flush input buffer."""

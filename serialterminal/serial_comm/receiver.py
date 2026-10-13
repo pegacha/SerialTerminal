@@ -13,15 +13,26 @@ class SerialReceiver:
     # Character transmission time calculation constants
     BITS_PER_BYTE = 10  # 1 start + 8 data + 1 stop bit (typical)
     SAFETY_MULTIPLIER = 3  # Wait for 3 character times of silence
-    MIN_TIMEOUT = 0.005  # 5ms minimum (for very high baud rates)
+    # Floor for the automatic gap. USB-serial adapters deliver bytes in bursts,
+    # not as they arrive on the wire: an FTDI chip flushes every 16 ms by
+    # default. With the old 5 ms floor a message the device sent in one go was
+    # cut at each burst and logged as several messages.
+    MIN_TIMEOUT = 0.030
     MAX_TIMEOUT = 0.200  # 200ms maximum (for very low baud rates)
+    # A frame ends at a gap, but a device that sends without ever pausing would
+    # otherwise build one message forever - nothing shown, memory growing, and
+    # a multi-megabyte entry to render when it finally stopped. Show what has
+    # arrived once it reaches either limit.
+    MAX_FRAME_BYTES = 4096
+    MAX_FRAME_SECONDS = 0.5
 
     def __init__(
         self,
         connection: SerialConnection,
         on_frame: Callable[[bytes], None],
         baud_rate: Optional[int] = None,
-        message_timeout: Optional[float] = None
+        message_timeout: Optional[float] = None,
+        on_lost: Optional[Callable[[str], None]] = None,
     ):
         """
         Initialize the serial receiver.
@@ -35,11 +46,15 @@ class SerialReceiver:
         """
         self.connection = connection
         self.on_frame = on_frame
+        # Called (from the receive thread) with the reason when the port fails
+        # under us - unplugged, device reset - rather than on a requested stop.
+        self.on_lost = on_lost
         self.baud_rate = baud_rate
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.buffer = bytearray()
         self.last_receive_time = 0.0
+        self.frame_started = 0.0
 
         # Calculate or set timeout
         if message_timeout is not None:
@@ -182,32 +197,51 @@ class SerialReceiver:
                     log.debug("connection lost, exiting loop")
                     break
 
-                current_time = time.time()
-
-                # Check if buffer has timed out
-                if self.buffer and self.last_receive_time > 0:
-                    time_since_last = current_time - self.last_receive_time
-                    if time_since_last >= self.message_timeout:
-                        # Timeout reached, send buffered message
-                        self._send_buffered_message()
-
-                # Read data from serial connection
+                # Read BEFORE deciding a message has ended. The old order checked
+                # the gap first, so bytes that arrived while the loop slept (up
+                # to ~16 ms per sleep on some Windows Pythons) counted as silence
+                # and the message was cut before they were read.
                 try:
                     data = self.connection.read()
-
-                    if data:
-                        # Add to buffer
-                        self.buffer.extend(data)
-                        self.last_receive_time = current_time
-                    else:
-                        # No data, sleep briefly to avoid busy-waiting
-                        time.sleep(0.001)  # 1ms sleep
-
                 except Exception as e:
                     log.exception("error reading data: %s", e)
                     time.sleep(0.01)
+                    continue
+
+                now = time.monotonic()  # wall-clock jumps must not cut frames
+                if data:
+                    if not self.buffer:
+                        self.frame_started = now
+                    self.buffer.extend(data)
+                    self.last_receive_time = now
+                    if (len(self.buffer) >= self.MAX_FRAME_BYTES
+                            or now - self.frame_started >= self.MAX_FRAME_SECONDS):
+                        self._send_buffered_message()
+                    continue  # drain whatever else is already waiting
+
+                if self.buffer and now - self.last_receive_time >= self.message_timeout:
+                    self._send_buffered_message()
+                time.sleep(0.001)
 
         except Exception as e:
             log.exception("fatal error in receive loop: %s", e)
+
+        lost = self.running and not self.connection.connected
+        # The thread is ending either way. Left True after a loss, the next
+        # start() thought a thread was already running and started none.
+        self.running = False
+        if lost:
+            # The port failed under us rather than being closed on request: show
+            # what had arrived, then say why the connection ended.
+            if self.buffer:
+                self._send_buffered_message()
+            reason = getattr(self.connection, "lost_reason", None) or "connection lost"
+            log.debug("receive loop ended: %s", reason)
+            if self.on_lost is not None:
+                try:
+                    self.on_lost(reason)
+                except Exception as e:
+                    log.exception("error in on_lost callback: %s", e)
+            return
 
         log.debug("receive loop ended")

@@ -12,12 +12,13 @@ readme = "README.MD"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"  # PEP 604 unions (Path | None) are evaluated at def time
-# Floors are tested, not guessed: CI-equivalent runs pass on exactly these.
+# The versions the app is developed and tested on. It's an application, not a
+# library: supporting years-old Textual only bought compatibility code.
 dependencies = [
-    "textual>=4.0",  # compact Button/Select/Input arrived in 4.0
+    "textual>=8.2",
     "pyserial>=3.5",
     "pyyaml>=6.0.3",
-    "textual-fspicker>=0.2.0",  # FileSave(default_file=) - Ctrl+S record crashes without it
+    "textual-fspicker>=1.0.1",
 ]
 keywords = ["serial", "uart", "rs232", "terminal", "tui", "textual", "modbus", "docklight"]
 classifiers = [
