@@ -17,6 +17,8 @@ isn't enough. Runs on Windows, macOS and Linux.
 * **Checksums** - sum8, xor8, lrc8, CRC-16/MODBUS, CRC-16/CCITT.
 * **Docklight import** - `.ptp` projects become buttons and sequences.
 * **Send Command** with live validation and shell-style history (Up / Down).
+* **Control characters** by name (`<CR>`, `<STX>`...) and by shortcut
+  (`Ctrl+Enter` = CR, `Ctrl+Shift+Enter` = LF, others assignable in Settings).
 * **Auto-connect** on send; port loss is detected and reported.
 * **Settings** (`F2`) - theme, timestamps, log colors, frame gap, verbose errors.
 
@@ -24,24 +26,32 @@ isn't enough. Runs on Windows, macOS and Linux.
 
 ## Install
 
-Python 3.10 or newer.
+All you need is Python 3.10 or newer - no git. pip downloads the release from
+GitHub and installs it.
+
+Windows:
 
 ```bash
-pip install .
+py -m pip install https://github.com/pegacha/SerialTerminal/archive/refs/tags/v0.4.0.zip
 ```
 
 ```bash
-serialterminal
+py -m serialterminal
 ```
 
-`python -m serialterminal` also works. On macOS and Linux use `pip3`/`python3`;
-on Linux, join the `dialout` group to open ports (see
-[Platform notes](docs/guide.md#platform-notes)).
+macOS and Linux: the same with `python3` instead of `py`. On Linux, join the
+`dialout` group to open ports (see [Platform notes](docs/guide.md#platform-notes)).
+
+The `serialterminal` command works too once pip's scripts folder is on your PATH;
+the app offers to add it on first launch. Later versions install themselves:
+the app checks for new releases (see [Updates](#updates)). From a copy of the
+source, `pip install .` installs that copy.
 
 ## Quick start
 
-1. Copy `project.example.yml` to `project.yml`, load it with `Ctrl+T`, or drag
-   it onto the window.
+1. Start it - no config needed; `project.yml` is written when you connect or
+   quit. Add buttons with **+ New** (`Ctrl+N`), or import a config or Docklight
+   `.ptp` (`Ctrl+T`, or drag it onto the window).
 2. Pick the port and line settings at the top.
 3. Type in **Send Command** or press a button - it connects as needed.
 

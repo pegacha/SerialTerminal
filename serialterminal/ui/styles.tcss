@@ -772,3 +772,68 @@ UpdateScreen {
     min-width: 11;
     margin-left: 2;
 }
+
+/* ---- Control character shortcuts (Settings > Keyboard) -------------------- */
+
+ControlKeysScreen, KeyCaptureScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#control-keys {
+    width: 64;
+    max-width: 100%;
+    height: 90%;
+    padding: 0 2;
+    border: round $primary;
+    border-title-align: left;
+    border-title-style: bold;
+    background: $surface;
+}
+
+#control-keys-table {
+    height: 1fr;
+    margin-top: 1;
+}
+
+#control-keys-status {
+    height: 1;
+    color: $text-muted;
+}
+
+#control-keys-status.-error {
+    color: $text-error;
+}
+
+#control-keys-buttons {
+    height: 1;
+    margin: 1 0;
+}
+
+#control-keys-buttons Button {
+    width: auto;
+    min-width: 9;
+    margin-right: 1;
+}
+
+#settings-control-keys {
+    width: auto;
+    min-width: 12;
+}
+
+#key-capture {
+    width: 52;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#key-capture-title {
+    text-style: bold;
+}
+
+#key-capture-hint {
+    margin-top: 1;
+    color: $text-muted;
+}

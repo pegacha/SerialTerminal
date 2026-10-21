@@ -180,7 +180,7 @@ class TestCheckNow:
             app.notify = lambda message, **kwargs: seen.append(message)
             await pilot.press("f2")
             await pilot.pause(0.2)
-            await pilot.click("#settings-update-now")
+            app.screen.query_one("#settings-update-now").press()  # below the fold at 40 rows
             await settle(pilot, lambda: seen)
             assert seen == [f"You have the latest version ({__version__})."]
 

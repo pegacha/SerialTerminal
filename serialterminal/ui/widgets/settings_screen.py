@@ -148,6 +148,13 @@ class SettingsScreen(ModalScreen):
                     yield Static(Content(f"Pick {REPEAT_TEXT} if {REPEAT_SYMBOL} shows as a box."),
                                  classes="settings-note")
 
+                with section("Keyboard"):
+                    with Horizontal(classes="settings-row"):
+                        yield Label("Control characters", classes="settings-label")
+                        yield Button("Shortcuts...", id="settings-control-keys", compact=True)
+                    yield Static("Keys that type <CR>, <LF>... into data you send.",
+                                 classes="settings-note", markup=False)
+
                 with section("Errors"):
                     with Horizontal(classes="settings-row"):
                         yield Checkbox("Verbose COM errors", value=app.verbose_errors(),
@@ -248,6 +255,9 @@ class SettingsScreen(ModalScreen):
         elif event.button.id == "settings-close":
             event.stop()
             self.dismiss()
+        elif event.button.id == "settings-control-keys":
+            event.stop()
+            self.app.action_control_keys()
         elif event.button.id == "settings-update-now":
             event.stop()
             self.app.check_for_updates(manual=True)

@@ -55,9 +55,9 @@ tests/                           pytest suite, fake serial connection
 
 ## Known gaps
 
-* The Docklight importer assumes the field layout of the `.ptp` files it was
-  written against, and its tests are characterization tests built from that
-  same assumption rather than from a real Docklight export.
+* The Docklight importer follows the layout of the sample projects Docklight
+  V2.4 saves. Data-bits codes other than 8 bits and stop-bits codes other than
+  1 have not been seen in a real file; they are reported, not guessed.
 * `Ctrl+W` (clear) and `Ctrl+E` (export) are shadowed while a text box has
   focus, because Textual's `Input` binds them to delete-word and end-of-line.
 * At 80×24 the log gets about ten rows and the button panel one row of

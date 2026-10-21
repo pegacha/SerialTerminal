@@ -6,6 +6,8 @@ All notable changes to SerialTerminal. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 ### Added
 
 - **Command history** in Send Command: Up and Down recall earlier commands,
@@ -33,14 +35,49 @@ All notable changes to SerialTerminal. The format follows
   the release's wheel or its source archive. A source checkout is told to
   `git pull` instead. Settings has the switch and a Check now button.
 
+- **Control character shortcuts**: Settings > Keyboard assigns keys to ASCII
+  0-31 (defaults, as in Docklight: `Ctrl+Enter` CR, `Ctrl+Shift+Enter` LF). A
+  shortcut types the character in Send Command and the button editor, in the
+  field's notation (`<CR>`, `0D`, `13`, `00001101`). Keys already used, and plain
+  text keys, are refused. In Windows Terminal, Ctrl+Enter arrives as Ctrl+J and
+  works; Ctrl+Shift+Enter can't be told apart from it there, so give LF another
+  key.
+
+- The title shows the project file (`SerialTerminal 0.3.1 - bench.ptp`) while
+  the project matches the file last imported or exported; just the file name
+  when the window is narrow.
+
 ### Changed
 
+- Send Command and ASCII receive patterns understand control-character names
+  (`<CR>`, `<LF>`, `<STX>`...) as the button editor already did: `AT<CR>` now
+  sends a carriage return, not the four characters.
 - Received messages are stamped with the time their first byte arrived, not
   the time they were shown - which was after the frame gap, so `[RX]` times
   ran about 30 ms late and reply delays measured from the log were too long.
   Recordings use the same time.
 - Opening the port list rescans the ports, so an adapter plugged in after
   launch is there without pressing Refresh. The selected port is kept.
+
+### Removed
+
+- `project.example.yml` and `settings.example.yml`. No YAML ships with the
+  project; the app writes `settings.yml` at start and `project.yml` when it
+  first saves.
+
+### Fixed
+
+- **Docklight import** (`.ptp`), checked against the sample projects Docklight
+  itself ships:
+  - checksums were dropped, so imported Modbus buttons sent `00 00` instead of
+    the CRC; they now carry `crc16_modbus` and friends;
+  - parity was always None (an Even-parity project imported as None);
+  - `##` (zero or one byte) became `??` (exactly one), breaking
+    variable-length patterns;
+  - pauses, handshake signals and other function characters were copied into
+    patterns as data;
+  - VERSION 7 projects lost their port.
+  What can't be converted exactly is now left out and listed in the log.
 
 ## [0.3.1] - 2026-10-13
 
@@ -206,6 +243,7 @@ First tagged release.
 - Recording releases its file even if the final write fails.
 - Every log tab no longer reserves an empty scrollbar row.
 
+[0.4.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.4.0
 [0.3.1]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pegacha/SerialTerminal/releases/tag/v0.2.0

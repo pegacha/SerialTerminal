@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from importlib import metadata
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from serialterminal import __version__
 
@@ -125,7 +125,9 @@ def launched_by_exe() -> bool:
     rename it (WinError 32) and an update must wait until it has exited.
     """
     return (sys.platform == "win32"
-            and Path(sys.argv[0]).name.lower() == "serialterminal.exe")
+            # PureWindowsPath: the path is a Windows one by definition here,
+            # and Path() on another OS doesn't split it at backslashes.
+            and PureWindowsPath(sys.argv[0]).name.lower() == "serialterminal.exe")
 
 
 def install_after_exit(target: str) -> None:

@@ -1,6 +1,7 @@
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
+from textual.content import Content
 from textual.widgets import Footer, Static, Button, Select, Input
 from textual.containers import Horizontal, Vertical
 from textual.widgets.select import InvalidSelectValueError
@@ -12,6 +13,7 @@ from textual_fspicker import Filters
 from datetime import datetime, timedelta
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+import hashlib
 import re
 import serial
 import threading
@@ -31,6 +33,7 @@ from serialterminal.ui.widgets.button_editor import ButtonEditor
 from serialterminal.ui.widgets.quick_send import QuickSend, clean_history
 from serialterminal.ui.widgets.recent_panel import RecentFiles
 from serialterminal.ui.widgets.side_strip import SideStrip
+from serialterminal.ui.control_keys import ENTER_ALIASES, ControlKeysScreen, clean_shortcuts
 from serialterminal.ui.widgets.update_screen import UpdateScreen
 from serialterminal import updater
 from serialterminal.ui.widgets.file_pickers import CompactFileOpen, CompactFileSave
@@ -44,12 +47,21 @@ from serialterminal.serial_comm.receiver import SerialReceiver
 
 from serialterminal.utils.docklight_interpreter import DocklightConfigInterpreter
 from serialterminal.utils.formatting import TIME_FORMATS, format_stamp
-from serialterminal.utils.payload import build_frame
+from serialterminal.utils.payload import build_frame, expand_control_names
 from serialterminal.utils.session_capture import SessionCapture
 from serialterminal.utils.places import Places
 from serialterminal.utils.dropped import dropped_project
 
 log = logging.getLogger("serialterminal.app")
+
+
+class TitleBar(Static):
+    """The top line. Re-fits the project name when the window is resized."""
+
+    def on_resize(self, _event) -> None:
+        refresh = getattr(self.app, "_refresh_title", None)
+        if refresh is not None:
+            refresh()
 
 
 class _UnreadableConfig(Exception):
@@ -193,7 +205,7 @@ class TUIApp(App):
         self.load_config()
 
     def compose(self) -> ComposeResult:
-        yield Static(f"SerialTerminal {__version__}", id="title")
+        yield TitleBar(f"SerialTerminal {__version__}", id="title")
         yield SerialBar()
         # Log and Send Command on the left, control buttons in a sidebar on the
         # right, so the log gets every row the serial bar doesn't use. Below
@@ -237,6 +249,59 @@ class TUIApp(App):
                 return
         await super().on_event(event)
 
+    # ------------------------------------------------------------------
+    # Title: "SerialTerminal X.Y.Z - bench.ptp"
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _project_fingerprint(config: dict) -> str:
+        """What identifies the project's content: its buttons and sequences.
+
+        Serial settings are left out - picking a port or baud rate isn't
+        editing the project, and the name shouldn't vanish on every connect.
+        """
+        content = {'buttons': config.get('buttons') or [],
+                   'sequences': config.get('sequences') or []}
+        text = yaml.safe_dump(content, sort_keys=True, allow_unicode=True)
+        return hashlib.sha1(text.encode('utf-8')).hexdigest()
+
+    def _remember_project_file(self, path: Path):
+        """The project now matches `path` (just imported or exported)."""
+        cfg = self.settings.get('config')
+        if not isinstance(cfg, dict):
+            cfg = self.settings['config'] = {}
+        cfg['last_used'] = str(path)
+        cfg['fingerprint'] = self._project_fingerprint(self.config)
+        self.save_settings()
+        self._refresh_title()
+
+    def project_file_name(self) -> str | None:
+        """The file the current project came from or was saved to, while it
+        still matches it; None if there is none or it has been edited since."""
+        cfg = self.settings.get('config')
+        if not isinstance(cfg, dict) or not cfg.get('last_used') or not cfg.get('fingerprint'):
+            return None
+        if getattr(self, 'config_unreadable', None):
+            return None
+        if cfg['fingerprint'] != self._project_fingerprint(self.config):
+            return None
+        return Path(cfg['last_used']).name
+
+    def _refresh_title(self):
+        try:
+            title = self.query_one("#title", Static)
+        except (NoMatches, ScreenStackError):
+            return
+        base = f"SerialTerminal {__version__}"
+        name = self.project_file_name()
+        text = base
+        if name:
+            full = f"{base} - {name}"
+            width = title.size.width or self.size.width
+            # Too narrow for both: the project name is what changes, so it stays.
+            text = full if len(full) <= width - 2 else name
+        title.update(Content(text))  # literal: a file name isn't markup
+
     def on_mount(self):
         """Initialize UI components on mount."""
         self._app_thread_id = threading.get_ident()
@@ -252,6 +317,7 @@ class TUIApp(App):
         self.query_one("#serial-port-select", PortSelect).before_open = self.refresh_serial_ports
         self._apply_serial_config_to_ui()
         self._report_config_problems()
+        self._refresh_title()
 
     def _apply_serial_config_to_ui(self):
         """Apply the loaded theme, serial and quick-send settings onto the widgets.
@@ -633,6 +699,7 @@ class TUIApp(App):
             sequence_count = len(self.sequence_handler.get_active_sequences()) if self.sequence_handler else 0
             self.log_message(f"Config reloaded: {button_count} buttons, {sequence_count} sequences", 'info')
             self._report_config_problems()
+            self._refresh_title()
             
         except Exception as e:
             self.log_message(f"Error reloading config: {e}", 'error')
@@ -656,13 +723,14 @@ class TUIApp(App):
 
         The current config is backed up to project.backup.yml first.
         """
+        notes = []  # what a Docklight import left out or changed
         try:
             # Check file extension to determine format
             if file_path.suffix.lower() == '.ptp':
                 # Docklight format
                 interpreter = DocklightConfigInterpreter()
                 new_config = interpreter.parse_file(file_path)
-                self.log_message(f"Imported Docklight config", 'info')
+                notes = interpreter.problems
             elif file_path.suffix.lower() in {'.yml', '.yaml'}:
                 # YAML format
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -691,16 +759,16 @@ class TUIApp(App):
             self.config_unreadable = None
             self.save_config()
             
-            # Update last_used in settings
-            if 'config' not in self.settings:
-                self.settings['config'] = {}
-            self.settings['config']['last_used'] = str(file_path)
-            self.save_settings()
-            
             # Reload everything
             self.action_reload_config()
+            self._remember_project_file(file_path)
             
             self.log_message(f"Config imported from: {file_path.name}", 'info')
+            if notes:
+                # After the reload's own messages, so they aren't buried.
+                self.log_message(f"Docklight import: {len(notes)} item(s) to check:", 'error')
+                for note in notes:
+                    self.log_message(f"  {note}", 'error')
             self.places.add_recent(file_path, "config")
             
         except yaml.YAMLError as e:
@@ -731,12 +799,7 @@ class TUIApp(App):
                 self.log_message(f"Config exported to: {file_path.name}", 'info')
                 self.places.add_recent(file_path, "config")
                 
-                # Update last_used in settings
-                if 'config' not in self.settings:
-                    self.settings['config'] = {}
-                self.settings['config']['last_used'] = str(file_path)
-                self.save_settings()
-                
+                self._remember_project_file(file_path)
             except Exception as e:
                 self.log_message(f"Error exporting: {e}", 'error')
         
@@ -1057,7 +1120,10 @@ class TUIApp(App):
         box = self.query_one("#quick-send-input", Input)
         quick_send = self.query_one(QuickSend)
         options = quick_send.options()
-        if self._send_command(box.value, **options):
+        text = box.value
+        if options["format_override"] == "ascii":
+            text = expand_control_names(text)  # <CR> typed or from a shortcut
+        if self._send_command(text, **options):
             quick_send.remember(box.value, options["format_override"])
             self.save_settings()  # the history lives in settings.yml
             box.value = ""
@@ -1450,6 +1516,7 @@ class TUIApp(App):
                 self._stop_repeating_button(button_id)
         for problem in panel.problems:
             self.log_message(problem, 'error')
+        self._refresh_title()  # an edited project no longer matches its file
 
     # ========================================================================
     # SETTINGS (F2)
@@ -1621,6 +1688,39 @@ class TUIApp(App):
     def set_theme(self, theme: str):
         self.theme = theme  # recolours the log via theme_changed_signal
         self._save_settings_or_warn()
+
+    def control_shortcuts(self) -> dict:
+        """Control character (0-31) -> key, from settings.yml or the defaults."""
+        return clean_shortcuts(self.settings.get('control_shortcuts'))
+
+    def control_code_for_key(self, key: str):
+        """The control character a key types in a data field, or None."""
+        shortcuts = self.control_shortcuts()
+        code = next((c for c, k in shortcuts.items() if k == key), None)
+        if code is None and key in ENTER_ALIASES:
+            # Terminals without the kitty keyboard protocol (Windows Terminal
+            # included, measured) send Ctrl+Enter as a line feed, which
+            # arrives as ctrl+j: honour a ctrl+enter shortcut for it.
+            alias = ENTER_ALIASES[key]
+            code = next((c for c, k in shortcuts.items() if k == alias), None)
+        return code
+
+    def set_control_shortcut(self, code: int, key: str | None):
+        shortcuts = self.control_shortcuts()
+        if key:
+            shortcuts[code] = key
+        else:
+            shortcuts.pop(code, None)
+        # Saved even when empty: an empty map means "none", not "defaults".
+        self.settings['control_shortcuts'] = {c: shortcuts[c] for c in sorted(shortcuts)}
+        self._save_settings_or_warn()
+
+    def reset_control_shortcuts(self):
+        self.settings.pop('control_shortcuts', None)
+        self._save_settings_or_warn()
+
+    def action_control_keys(self):
+        self.push_screen(ControlKeysScreen())
 
     def time_format(self) -> str:
         """settings.yml's time_format: one of TIME_FORMATS, milliseconds by default."""

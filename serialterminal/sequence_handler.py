@@ -4,7 +4,7 @@ import re
 import logging
 from typing import List, Dict, Any, Optional
 
-from serialterminal.utils.payload import build_frame
+from serialterminal.utils.payload import build_frame, expand_control_names
 
 log = logging.getLogger("serialterminal.sequence")
 
@@ -88,7 +88,8 @@ class ReceiveSequence:
                 # Escape the literal runs, or regex metacharacters that occur
                 # naturally in payloads ($, ., *, +, (, [ ...) silently change
                 # what matches - e.g. "PRICE $1.00" would match nothing at all.
-                literals = self.receive_data.split("??")
+                # <CR>, <LF>... name control characters, as everywhere else.
+                literals = expand_control_names(self.receive_data).split("??")
                 pattern_str = ANY_BYTE.join(re.escape(part) for part in literals)
                 return re.compile(pattern_str.encode('ascii'))
                 

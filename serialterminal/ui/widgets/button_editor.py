@@ -20,6 +20,7 @@ from textual.widgets import (
 from textual.widgets.select import InvalidSelectValueError
 
 from serialterminal.sequence_handler import ReceiveSequence
+from serialterminal.ui.control_keys import ControlKeyInput, ControlKeyTextArea
 from serialterminal.utils.checksum import CHECKSUMS
 from serialterminal.utils.payload import (
     FORMATS, LINE_ENDINGS, config_message, editor_byte_position,
@@ -80,7 +81,8 @@ class ButtonEditor(ModalScreen):
                             yield RadioButton(MODE_LABELS[fmt], value=(fmt == self.mode),
                                               id=f"ed-mode-{fmt}")
                     yield Static("", id="ed-pos")
-                yield TextArea(id="ed-sequence", soft_wrap=True)
+                yield ControlKeyTextArea(id="ed-sequence", soft_wrap=True,
+                                         notation=lambda: self.mode)
                 yield Static("", id="ed-error", markup=False)
                 yield Rule(classes="ed-rule")
 
@@ -114,8 +116,10 @@ class ButtonEditor(ModalScreen):
                             with Horizontal(classes="ed-inline"):
                                 yield Select([(MODE_LABELS[f], f) for f in FORMATS], value="hex",
                                              allow_blank=False, id="ed-auto-format", compact=True)
-                                yield Input(placeholder="e.g. 05, or ID?? (?? = any byte)",
-                                            id="ed-auto-data", compact=True)
+                                yield ControlKeyInput(
+                                    placeholder="e.g. 05, or ID?? (?? = any byte)",
+                                    id="ed-auto-data", compact=True,
+                                    notation=lambda: self._auto_format())
                             with Horizontal(classes="ed-inline"):
                                 yield Label("Wait")
                                 yield Input("0", id="ed-auto-delay", compact=True,
@@ -204,6 +208,10 @@ class ButtonEditor(ModalScreen):
             self.query_one("#ed-auto-delay", Input).value,
             self.query_one("#ed-doc", TextArea).text,
         )
+
+    def _auto_format(self) -> str:
+        value = self.query_one("#ed-auto-format", Select).value
+        return value if isinstance(value, str) else "hex"
 
     def collect(self, strict: bool = True) -> tuple[dict | None, list[str]]:
         """The button entry the form describes, or None and what's wrong.

@@ -6,7 +6,8 @@ from textual.widgets import Button, Select, Input
 from textual.containers import Container, Horizontal
 
 from serialterminal.utils.checksum import CHECKSUMS
-from serialterminal.utils.payload import LINE_ENDINGS, parse_payload
+from serialterminal.ui.control_keys import ControlKeyInput
+from serialterminal.utils.payload import LINE_ENDINGS, expand_control_names, parse_payload
 
 FORMATS = ("ascii", "hex", "decimal", "binary")
 MAX_HISTORY = 100
@@ -29,8 +30,9 @@ class PayloadValidator(Validator):
         self._get_format = get_format
 
     def validate(self, value: str) -> ValidationResult:
+        fmt = self._get_format()
         try:
-            parse_payload(value, self._get_format())
+            parse_payload(expand_control_names(value) if fmt == "ascii" else value, fmt)
         except ValueError as e:
             return self.failure(str(e))
         return self.success()
@@ -91,8 +93,9 @@ class QuickSend(Container):
                 compact=True,
                 tooltip="Computed over the payload and appended as raw bytes.",
             )
-            yield Input(
+            yield ControlKeyInput(
                 placeholder="Enter command...",
+                notation=self._current_format,
                 id="quick-send-input",
                 validators=[PayloadValidator(self._current_format)],
                 validate_on=["changed", "submitted"],

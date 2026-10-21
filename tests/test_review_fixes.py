@@ -446,3 +446,95 @@ class TestDisplay:
                 if app.screen.region.contains_region(key.region)
             }
             assert {"quit", "filter", "pause", "record", "clear"} <= visible
+
+
+# ----------------------------------------------------------------------------
+# Title bar: SerialTerminal X.Y.Z - project file
+# ----------------------------------------------------------------------------
+
+def _title(app):
+    return str(app.query_one("#title").render())
+
+
+def _ptp(folder):
+    path = folder / "bench line 3.ptp"
+    path.write_bytes(b"SEND\r\n0\r\nPing\r\n50 49 4E 47\r\n0\r\n5\r\n\r\n")
+    return path
+
+
+async def _wait(pilot, condition):
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if condition():
+            return
+
+
+class TestTitleShowsTheProject:
+    async def test_nothing_loaded(self, write_config, make_app):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            from serialterminal import __version__
+            assert _title(app) == f"SerialTerminal {__version__}"
+
+    async def test_imported_file_named_then_edited_and_gone(self, write_config, make_app,
+                                                            isolated_cwd):
+        from serialterminal import __version__
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.import_config_file(_ptp(isolated_cwd))
+            await _wait(pilot, lambda: "bench" in _title(app))
+            assert _title(app) == f"SerialTerminal {__version__} - bench line 3.ptp"
+
+            await app.save_button(None, {"label": "New", "message": "X", "format": "ascii"})
+            await pilot.pause()
+            assert _title(app) == f"SerialTerminal {__version__}", "unsaved changes"
+
+    async def test_narrow_window_shows_only_the_file(self, write_config, make_app, isolated_cwd):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.import_config_file(_ptp(isolated_cwd))
+            await _wait(pilot, lambda: "bench" in _title(app))
+            await pilot.resize_terminal(36, 24)
+            await pilot.pause(0.2)
+            assert _title(app) == "bench line 3.ptp"
+            await pilot.resize_terminal(120, 40)
+            await pilot.pause(0.2)
+            assert _title(app).startswith("SerialTerminal")
+
+    async def test_name_survives_a_restart_while_unchanged(self, write_config, make_app,
+                                                           isolated_cwd):
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.import_config_file(_ptp(isolated_cwd))
+            await _wait(pilot, lambda: "bench" in _title(app))
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.click("#serial-baud")  # picking line settings isn't editing
+            await pilot.press("escape")
+            assert _title(app).endswith(" - bench line 3.ptp")
+
+    async def test_file_edited_by_hand_drops_the_name(self, write_config, make_app,
+                                                      isolated_cwd):
+        import yaml
+        write_config(MINIMAL_CONFIG)
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.import_config_file(_ptp(isolated_cwd))
+            await _wait(pilot, lambda: "bench" in _title(app))
+        config = yaml.safe_load((isolated_cwd / "project.yml").read_text())
+        config["buttons"].append({"id": "x", "label": "Added", "message": "X"})
+        (isolated_cwd / "project.yml").write_text(yaml.dump(config))
+        app = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert "bench" not in _title(app)

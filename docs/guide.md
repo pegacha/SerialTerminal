@@ -29,6 +29,13 @@ to the log. To make everything bigger or smaller, zoom the terminal itself
 (`Ctrl` + `+`/`-` or `Ctrl` + mouse wheel in Windows Terminal); the app has
 no font size of its own.
 
+**Title.** The top line reads `SerialTerminal 0.3.1 - bench.ptp`: the project
+file last imported or exported, as long as the buttons and sequences still
+match it. Edit, add or delete a button, or change `project.yml` by hand, and
+only `SerialTerminal 0.3.1` remains until you export or import again; picking a
+port or baud rate doesn't count. In a window too narrow for both, only the file
+name shows.
+
 **Side panels.** **Recent projects** (`F3`) sits on the left, collapsed at
 start: it lists the project files you imported or exported, newest first, and
 hovering one whose path is cut off scrolls it into view, and clicking one
@@ -121,6 +128,30 @@ errors** in Settings to also see the system's message and what to try (for
 example, joining the `dialout` group on Linux). The full detail is always in
 `serialterminal.log`.
 
+**Control characters.** In ASCII, control characters are written by the names
+the log uses - `<CR>`, `<LF>`, `<STX>`, `<ACK>`... - in Send Command, in the
+button editor and in ASCII receive patterns; `AT<CR><LF>` sends `AT` and a
+CR LF. Anything else in angle brackets is sent as typed. Keyboard shortcuts
+type them for you: **Settings** (`F2`) > Keyboard > **Shortcuts...** lists ASCII
+0-31; select a row, press Enter or **Set...**, then press the key (Esc cancels,
+Delete clears). The defaults are Docklight's: `Ctrl+Enter` for CR and
+`Ctrl+Shift+Enter` for LF. A shortcut inserts its character in the field's
+notation - `<CR>` in ASCII, `0D` in HEX, `13` in Decimal, `00001101` in Binary -
+in Send Command and in the button editor's Sequence and auto-send boxes.
+Keys SerialTerminal or text editing already use are refused, and so are plain
+keys that type text.
+
+Which keys reach the app depends on the terminal. kitty, WezTerm, Ghostty, foot
+and iTerm2 (with "Report modifiers using CSI u" on) report `Ctrl+Enter` and
+`Ctrl+Shift+Enter` as keys of their own. Windows Terminal sends `Ctrl+Enter` as
+a line feed, which arrives as `Ctrl+J`; a `Ctrl+Enter` shortcut answers to it,
+so the CR default works there, but `Ctrl+Shift+Enter` may not be told apart -
+if the LF shortcut doesn't type `<LF>`, give LF another key. macOS Terminal and
+GNOME Terminal send `Ctrl+Enter` as a plain `Enter`, which the dialog refuses
+as taken - pick a function key (`F5`-`F12`) or an `Alt`/`Ctrl` combination. On a Mac, Option works
+as Alt only with "Use Option as Meta key" on, and most `Cmd` keys are kept by the
+terminal. The dialog shows the name of the key it actually received.
+
 **Send Command.** The input is checked as you type against the selected
 format: a red border and a reason (`'G' is not a hex digit`) mean it would not
 send. A failed send keeps your text, including a write the port refused (an
@@ -178,7 +209,7 @@ Both lists live in `settings.yml`.
 | `Ctrl+F` | Filter the log; `Esc` closes |
 | `Ctrl+B` | Pause / resume the log view |
 | `Ctrl+S` | Start / stop recording the session to a file |
-| `F2` | Settings: theme, timestamps, log colors, frame gap, repeat marker, verbose errors |
+| `F2` | Settings: theme, timestamps, log colors, frame gap, repeat marker, control-character shortcuts, verbose errors |
 | `F3` | Show / hide recent projects |
 | `F4` | Show / hide the control buttons |
 | `Ctrl+R` | Reload `styles.tcss` (not shown in the footer) |
@@ -195,22 +226,21 @@ Two files, with different jobs:
 
 * **`project.yml`** — the working config: serial settings, quick-send options, buttons, sequences.
   Git-ignored, because it holds your device's commands and the app rewrites it.
-  Start from the shipped example:
-
-  ```bash
-  cp project.example.yml project.yml
-  ```
-
-  or load `project.example.yml` with `Ctrl+T`. To share a config, export a copy
-  with `Ctrl+E`; `Ctrl+T` imports one (YAML or Docklight `.ptp`).
+  Written the first time the app saves (on connect or quit), so there's nothing
+  to create by hand; add buttons in the app, or import a
+  config with `Ctrl+T` (YAML or Docklight `.ptp`). To share a config, export a
+  copy with `Ctrl+E`.
 * **`settings.yml`** — per-machine preferences: theme, log colors, repeat marker, recent files
-  and favorites. Not committed; copy `settings.example.yml` to start. Created
-  with defaults on first launch if missing.
+  and favorites. Not committed. Created with defaults on first launch if
+  missing; Settings (`F2`) changes everything in it. For reference:
 
   ```yaml
   ui:
     theme: gruvbox
   verbose_errors: false  # true: COM errors include the system message and a hint
+  time_format: milliseconds  # seconds, date, delta (+0.016) or off
+  updates:
+    check: true          # ask GitHub for a newer release at start, once a day
   repeat_marker: auto  # symbol (↻), text ([R]) or auto - see Repeating buttons
   log_colors:          # optional; set from Settings (F2)
     tx: $primary       # a theme color ($primary, $success, $warning, $error,
@@ -370,13 +400,26 @@ reports it in `serialterminal.log`.
 
 ### Importing from Docklight
 
-`Ctrl+T` on a `.ptp` file converts Docklight send/receive definitions into
-buttons and sequences. Docklight's `##` data markers become `??` wildcards.
-The current `project.yml` is backed up to `project.backup.yml` first.
+`Ctrl+T` on a `.ptp` file (or dropping it on the window) converts Docklight
+send sequences into buttons and receive sequences into sequences, with the
+port, baud rate and parity. The current `project.yml` is backed up to
+`project.backup.yml` first.
 
-The parser assumes the field layout of the `.ptp` files it was written against
-and does no bounds checking, so an unexpected file shape will report an error
-rather than import partially.
+- **Checksums** carry over: `CRC-MODBUS L`, `CRC-CCITT`, `MOD256`, `XOR` and
+  `LRC` (also as their generic `CRC:...` form) become the matching
+  SerialTerminal checksum, and the placeholder bytes Docklight overwrites are
+  removed - the button sends the same bytes. A received checksum isn't
+  validated: its bytes match any value.
+- **Wildcards:** `??` (one byte) imports as is. `##` (zero or one byte) is
+  dropped at either end of a pattern, where it changes nothing.
+
+Anything SerialTerminal can't do the same way is left out rather than imported
+half-right, and listed in the log after the import: send sequences with
+parameters, `##` inside a pattern, Docklight's function characters (pauses,
+handshake signals, bit masks, "anything but", break), checksums over part of a
+frame, at another position, as ASCII text or with an unsupported algorithm,
+and Monitoring mode or Tap ports. A file that isn't a Docklight project at all
+reports an error and imports nothing.
 
 ---
 

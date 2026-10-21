@@ -89,7 +89,10 @@ class TestList:
         assert tail("short") == "short"
         cut = tail("C:\\very\\long\\folder\\that\\does\\not\\fit\\configs", 20)
         assert len(cut) == 20 and cut.startswith("…") and cut.endswith("configs")
-        assert entry("C:\\x\\bench.yml").plain == "bench.yml\nC:\\x"
+        # A path in this OS's own form: Linux doesn't split C:\x\bench.yml.
+        from pathlib import Path
+        folder = Path("x")
+        assert entry(str(folder / "bench.yml")).plain == f"bench.yml\n{folder}"
 
 
 class TestOpening:

@@ -69,6 +69,32 @@ def parse_payload(text, fmt: str) -> bytes:
     return text.encode("ascii")
 
 
+def expand_control_names(text: str) -> str:
+    """`text` with <CR>, <LF>, <STX>... replaced by the characters they name.
+
+    The names the log shows and the control-character shortcuts insert. Send
+    Command and ASCII receive patterns read them through this, as the button
+    editor does, so a <CR> typed or inserted anywhere sends a carriage return.
+    Anything in angle brackets that isn't a control-character name is kept.
+    """
+    def replace(match):
+        byte = _TOKEN_BYTES.get(match.group(0).lower())
+        return chr(byte) if byte is not None else match.group(0)
+    return _TOKEN.sub(replace, str(text))
+
+
+def control_text(code: int, fmt: str) -> str:
+    """Control character `code` (0-31) written in notation `fmt`: <CR>, 0D, 13
+    or 00001101 - what a control-character shortcut inserts."""
+    if fmt == "hex":
+        return f"{code:02X}"
+    if fmt == "decimal":
+        return str(code)
+    if fmt == "binary":
+        return f"{code:08b}"
+    return CONTROL_NAMES[code]
+
+
 def line_ending_bytes(kind: str = "none") -> bytes:
     """The terminator for `kind`. Raises ValueError for an unknown kind."""
     try:
